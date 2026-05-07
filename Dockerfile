@@ -62,4 +62,4 @@ USER appuser
 # --workers 2: seguro para 1 vCPU; Cloud Run escala instancias según demanda.
 # Para PDF chunking (CPU intensivo) la concurrencia se limita al nivel Cloud Run
 # (--concurrency 10-20 recomendado en la consola).
-CMD ["sh", "-c", "uvicorn src.api:app --host 0.0.0.0 --port $PORT --workers 2 --timeout-keep-alive 120"]
+CMD ["sh", "-c", "uvicorn src.api:app --host 0.0.0.0 --port ${PORT:-8080} --workers 2 --timeout-keep-alive 120"]

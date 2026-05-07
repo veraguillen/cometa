@@ -145,7 +145,7 @@ steps:
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
-      - --port=3000
+      - --port=8080
       - --cpu=1
       - --memory=1Gi
       - --min-instances=0
