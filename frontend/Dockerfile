@@ -43,6 +43,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 # Cloud Run inyecta PORT en runtime; 3000 es el fallback local.
 ENV PORT=3000
+# HOSTNAME=0.0.0.0 es obligatorio: sin esto Next.js standalone hace bind
+# a 127.0.0.1 y Cloud Run no puede alcanzar el proceso → el contenedor
+# no arranca ("failed to start and listen on PORT").
+ENV HOSTNAME="0.0.0.0"
 
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
@@ -55,5 +59,7 @@ USER nextjs
 
 EXPOSE 3000
 
-# server.js generado por Next.js standalone; lee PORT del entorno.
-CMD ["node", "server.js"]
+# server.js generado por Next.js standalone.
+# Lee PORT y HOSTNAME desde el entorno (ambas variables seteadas arriba).
+# No usar `npm start`: no existe package.json en el bundle standalone.
+CMD ["sh", "-c", "node server.js"]
