@@ -60,6 +60,7 @@ USER nextjs
 EXPOSE 3000
 
 # server.js generado por Next.js standalone.
+# Exec form (sin shell wrapper): Node recibe SIGTERM directamente de Cloud Run.
 # Lee PORT y HOSTNAME desde el entorno (ambas variables seteadas arriba).
 # No usar `npm start`: no existe package.json en el bundle standalone.
-CMD ["sh", "-c", "node server.js"]
+CMD ["node", "server.js"]
