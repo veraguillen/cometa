@@ -1,0 +1,29 @@
+# gcloudignore — controla qué se sube a Cloud Build (NO el .dockerignore del backend)
+# Excluye lo innecesario para reducir el tamaño del tarball.
+
+# Secretos
+.env
+.env.*
+cometa_key.json
+client_secret*.json
+
+# Entornos virtuales
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Dependencias de frontend (se instalan en el Dockerfile)
+frontend/node_modules/
+frontend/.next/
+
+# Git y herramientas locales
+.git/
+.github/
+.claude/
+
+# Datos y logs
+data/
+temp/
+*.log

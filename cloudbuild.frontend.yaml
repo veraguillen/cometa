@@ -1,0 +1,62 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Cloud Build — Deploy SOLO del Frontend (Next.js standalone)
+#
+# Uso desde Cloud Shell:
+#   gcloud builds submit . \
+#     --config=cloudbuild.frontend.yaml \
+#     --project=cometa-mvp
+# ──────────────────────────────────────────────────────────────────────────────
+
+substitutions:
+  _REGION: us-central1
+  _REPO: cometa-vault
+  _FRONTEND_SERVICE: cometa-vault-frontend
+  _NEXT_PUBLIC_API_URL: https://cometa-vault-92572839783.us-central1.run.app
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+steps:
+  # ── 1. Build imagen del Frontend ─────────────────────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    id: build-frontend
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:latest
+      - --build-arg
+      - NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}
+      - --file
+      - frontend/Dockerfile
+      - frontend/
+
+  # ── 2. Push imagen ────────────────────────────────────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    id: push-frontend
+    waitFor: [build-frontend]
+    args: [push, "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:latest"]
+
+  # ── 3. Deploy a Cloud Run ─────────────────────────────────────────────────────
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: deploy-frontend
+    waitFor: [push-frontend]
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_FRONTEND_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:latest
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=3000
+      - --cpu=1
+      - --memory=1Gi
+      - --min-instances=0
+      - --max-instances=5
+      - --concurrency=80
+      - --set-env-vars=NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:latest

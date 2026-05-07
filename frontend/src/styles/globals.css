@@ -1,0 +1,318 @@
+/* Helvetica Now Display is a commercial font not on Google Fonts.
+   Inter is the closest open-source equivalent in terms of geometry and spacing. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* COMETA BRAND COLORS */
+  --cometa-dark-blue: #00237F;
+  --cometa-light-blue: #64CAE4;
+  --cometa-cyan: #00D4FF;
+  --cometa-purple: #6366F1;
+  --cometa-pink: #EC4899;
+  
+  /* Extended palette */
+  --cometa-dark-gradient: linear-gradient(135deg, var(--cometa-dark-blue) 0%, var(--cometa-light-blue) 100%);
+  --cometa-light-gradient: linear-gradient(135deg, var(--cometa-light-blue) 0%, var(--cometa-cyan) 100%);
+  
+  /* Typography — Helvetica Now Display (commercial) → Inter (open-source fallback) */
+  --font-heading: 'Helvetica Now Display', 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  --font-body: 'Helvetica Now Display', 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  
+  /* Spacing */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  --spacing-2xl: 3rem;
+  
+  /* Border radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 2.25rem;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06), 0 1px 1px 0 rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 1px 1px 0 rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+  
+  /* Blur effects */
+  --blur-sm: 4px;
+  --blur-md: 8px;
+  --blur-lg: 16px;
+  --blur-xl: 24px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-heading);
+  /* Official dark gradient — eliminates any bright background */
+  background: linear-gradient(160deg, #000000 0%, #00102e 60%, #00237F 100%);
+  background-attachment: fixed;
+  color: #ffffff;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* COMETA TYPOGRAPHY */
+.font-helvetica-regular {
+  font-family: var(--font-heading);
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  text-transform: none; /* Jamás mayúsculas sostenidas */
+}
+
+.font-helvetica-extralight {
+  font-family: var(--font-heading);
+  font-weight: 300;
+  letter-spacing: -0.015em;
+  text-transform: none;
+}
+
+/* COMETA BACKGROUNDS */
+.cometa-dark-bg {
+  background: var(--cometa-dark-blue);
+}
+
+.cometa-gradient-bg {
+  background: var(--cometa-dark-gradient);
+}
+
+.cometa-light-gradient-bg {
+  background: var(--cometa-light-gradient);
+}
+
+.cometa-glass-bg {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(var(--blur-md));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* COMETA BORDERS */
+.cometa-border {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.cometa-border-light {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.cometa-border-cyan {
+  border: 1px solid var(--cometa-cyan);
+}
+
+/* COMETA CARDS */
+.cometa-card {
+  background: var(--cometa-glass-bg);
+  border-radius: var(--radius-2xl);
+  border: var(--cometa-border);
+  box-shadow: var(--shadow-lg);
+  transition: all 0.3s ease;
+}
+
+.cometa-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-xl);
+  border-color: var(--cometa-border-cyan);
+}
+
+.cometa-metric-card {
+  background: var(--cometa-glass-bg);
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(100, 202, 228, 0.2);
+  transition: all 0.3s ease;
+}
+
+.cometa-metric-card:hover {
+  border-color: var(--cometa-light-blue);
+  box-shadow: 0 0 20px rgba(100, 202, 228, 0.3);
+}
+
+/* COMETA BUTTONS */
+.cometa-btn-primary {
+  background: var(--cometa-light-blue);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-family: var(--font-heading);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.cometa-btn-primary:hover {
+  background: var(--cometa-cyan);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.cometa-btn-secondary {
+  background: transparent;
+  color: var(--cometa-light-blue);
+  border: 1px solid var(--cometa-light-blue);
+  border-radius: 6px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-family: var(--font-heading);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.cometa-btn-secondary:hover {
+  background: rgba(100, 202, 228, 0.1);
+  border-color: var(--cometa-cyan);
+}
+
+/* COMETA LOGO */
+.cometa-logo {
+  width: 120px;
+  height: 40px;
+  background: white;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: var(--cometa-dark-blue);
+  letter-spacing: 2px;
+}
+
+/* COMETA AERIAL PHOTO BACKGROUNDS */
+.cometa-aerial-bg {
+  position: relative;
+  background: linear-gradient(135deg, rgba(0, 35, 79, 0.8), rgba(0, 35, 79, 0.4)),
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+.cometa-aerial-bg::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 35, 79, 0.3);
+  z-index: 1;
+}
+
+/* COMETA ANIMATIONS */
+@keyframes cometa-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes cometa-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes cometa-slide-in {
+  from { 
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.cometa-float {
+  animation: cometa-float 3s ease-in-out infinite;
+}
+
+.cometa-pulse {
+  animation: cometa-pulse 2s ease-in-out infinite;
+}
+
+.cometa-slide-in {
+  animation: cometa-slide-in 0.5s ease-out;
+}
+
+/* COMETA UTILITIES */
+.cometa-text-gradient {
+  background: var(--cometa-light-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  color: transparent;
+}
+
+.cometa-shadow-glow {
+  box-shadow: 0 0 30px rgba(100, 202, 228, 0.3);
+}
+
+.cometa-blur-backdrop {
+  backdrop-filter: blur(var(--blur-xl));
+  -webkit-backdrop-filter: blur(var(--blur-xl));
+}
+
+/* SCROLLBAR STYLING */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--cometa-light-blue);
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cometa-cyan);
+}
+
+/* FOCUS STATES */
+.cometa-focus:focus {
+  outline: none;
+  border-color: var(--cometa-cyan);
+  box-shadow: 0 0 0 3px rgba(100, 202, 228, 0.3);
+}
+
+/* RESPONSIVE DESIGN */
+@media (max-width: 768px) {
+  :root {
+    --spacing-xl: 1.5rem;
+    --spacing-2xl: 2rem;
+    --radius-2xl: 1.5rem;
+    --radius-3xl: 2rem;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --spacing-lg: 0.875rem;
+    --spacing-xl: 1.25rem;
+    --spacing-2xl: 1.5rem;
+    --radius-xl: 0.75rem;
+    --radius-2xl: 1rem;
+    --radius-3xl: 1.5rem;
+  }
+}

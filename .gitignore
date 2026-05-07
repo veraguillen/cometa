@@ -1,0 +1,69 @@
+# ─── Secrets & Credentials ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+cometa_key.json
+client_secret*.json
+*.pem
+*.key
+
+# ─── Data (confidential financial documents & processed outputs) ───────────────
+data/
+temp/
+histo/
+audit/
+base/
+
+# ─── Temporary & backup files ──────────────────────────────────────────────────
+*.bak
+*.tmp
+*.json.tmp
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ─── Node / Next.js ───────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+/build
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+*.tsbuildinfo
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+logs_*.txt
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── IDE & OS ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+.claude/
+
+# ─── Local SQLite & generated artifacts ───────────────────────────────────────
+cometa_master.db
+preview_for_analysts.json
+output_to_jero.json
+
+# ─── SQL artifacts & generated scripts ────────────────────────────────────────
+ejecutar_sql.py
+god_mode_fix.py
+fix_submission_id.py
+test_production_email.py

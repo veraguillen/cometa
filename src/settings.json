@@ -1,0 +1,13 @@
+{
+  "llm_model": "gemini-1.5-pro",
+  "gcp_region": "us-central1",
+  "gcp_project_id": "vc-os-prod-123",
+  "bq_dataset": "cometa_analytics_v1",
+  "service_account_key": "{\"type\":\"service_account\",\"project_id\":\"vc-os-prod-123\"}",
+  "looker_url": "",
+  "gcs_bucket": "",
+  "alert_webhook": "",
+  "min_confidence": 76,
+  "irr_alert_below": 12,
+  "notification_email": ""
+}

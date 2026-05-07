@@ -1,0 +1,110 @@
+﻿id,metric_name,input_file,category,data_type,unit,given_or_silver,formula_bq,innegociable,sector_scope,coverage_pct_historic,priority_tier,notes
+KPI-001,Revenue,PL,Top Line,currency,USD,GIVEN,,True,ALL,43.8,1,Net Revenue. Base de todos los ratios de margen.
+KPI-002,Gross Profit,PL,Top Line,currency,USD,GIVEN,,True,ALL,56.2,1,Revenue - COGS. Input crítico para Gross Margin.
+KPI-003,Gross Margin,PL,Margins,ratio,%,SILVER,"SAFE_DIVIDE(gross_profit, revenue)",False,ALL,100.0,1,Recalcular en BigQuery. Delta < 0.01% vs Excel confirmado.
+KPI-004,EBITDA,PL,Profitability,currency,USD,GIVEN,,True,ALL,56.2,1,"Earnings Before Interest, Taxes, Depreciation & Amortization."
+KPI-005,EBITDA Margin,PL,Margins,ratio,%,SILVER,"SAFE_DIVIDE(ebitda, revenue)",False,ALL,87.5,1,Outliers detectados. Marcar flag_review=TRUE si delta > 10%.
+KPI-006,EBT,PL,Profitability,currency,USD,GIVEN,,False,ALL,12.5,2,Earnings Before Taxes.
+KPI-007,EBT Margin,PL,Margins,ratio,%,SILVER,"SAFE_DIVIDE(ebt, revenue)",False,ALL,12.5,2,EBT / Revenue. Calculado cuando EBT disponible.
+KPI-008,S&M Expense,PL,OpEx,currency,USD,GIVEN,,False,ALL,31.2,2,Sales & Marketing spend. Input para SaaS Magic Number.
+KPI-009,S&M Expense Ratio,PL,Efficiency,ratio,%,SILVER,"SAFE_DIVIDE(sm_expense, revenue)",False,ALL,81.2,2,S&M / Revenue.
+KPI-010,Annual Revenue Growth,PL,Growth,ratio,%,SILVER,"SAFE_DIVIDE(SUM(revenue) OVER ltm_current, SUM(revenue) OVER ltm_prior) - 1",False,ALL,100.0,1,LTM window. Solo calculable en Dic (12m completos).
+KPI-011,Quarter Revenue Growth,PL,Growth,ratio,%,SILVER,"SAFE_DIVIDE(revenue_q1, revenue_q0) - 1",False,ALL,100.0,2,QoQ Revenue Growth.
+KPI-012,L6M CMGR,PL,Growth,ratio,%,SILVER,"POW(SAFE_DIVIDE(revenue_m6, revenue_m1), 1.0/6) - 1",False,ALL,100.0,2,Compound Monthly Growth Rate últimos 6 meses.
+KPI-013,L12M CMGR,PL,Growth,ratio,%,SILVER,"POW(SAFE_DIVIDE(revenue_m12, revenue_m1), 1.0/12) - 1",False,ALL,100.0,2,Compound Monthly Growth Rate últimos 12 meses.
+KPI-014,Net Income,PL,Profitability,currency,USD,GIVEN,,False,ALL,0.0,2,NUEVO — No en data legacy. Añadir al formulario estándar.
+KPI-015,Commission Revenue (or Take Rate on GWP),PL,Revenue Lines,currency,USD,GIVEN,,False,INSURTECH,0.0,3,Sector: Insurtech. Take Rate sobre Gross Written Premium.
+KPI-016,Net Interest Income,PL,Revenue Lines,currency,USD,GIVEN,,False,FINTECH_LENDING,6.2,3,Sector: Fintech/Lending.
+KPI-017,Interest Income Margin,PL,Margins,ratio,%,GIVEN,,False,FINTECH_LENDING,6.2,3,Sector: Fintech/Lending.
+KPI-018,Origination Fees,PL,Revenue Lines,currency,USD,GIVEN,,False,FINTECH_LENDING,0.0,3,Sector: Fintech/Lending.
+KPI-019,Servicing Revenue,PL,Revenue Lines,currency,USD,GIVEN,,False,PROPTECH,0.0,3,Sector: Proptech.
+KPI-020,Servicing Fee,PL,Revenue Lines,currency,USD,GIVEN,,False,PROPTECH,0.0,3,Sector: Proptech.
+KPI-021,Renta,PL,Revenue Lines,currency,USD,GIVEN,,False,PROPTECH,0.0,3,Sector: Proptech.
+KPI-022,Revenue from Credit Vertical,PL,Revenue Lines,currency,USD,GIVEN,,False,MARKETPLACE_FINTECH,0.0,3,Sector: Marketplace con vertical de crédito.
+KPI-023,Blended Take Rate,PL,Efficiency,ratio,%,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-024,Spread on Portfolio,PL,Margins,ratio,%,GIVEN,,False,FINTECH_LENDING,0.0,3,Sector: Fintech/Lending. Spread neto del portafolio.
+KPI-025,COGS,PL,Top Line,currency,USD,GIVEN,,False,ALL,0.0,2,NUEVO — Cost of Goods Sold. Revenue - COGS = Gross Profit. Triangulación obligatoria.
+KPI-026,Cash,BS,Liquidity,currency,USD,GIVEN,,True,ALL,43.8,1,Efectivo + equivalentes. Input 1 para Runway.
+KPI-027,Total Loan Portfolio,BS,Assets,currency,USD,GIVEN,,False,FINTECH_LENDING,6.2,2,Sector: Fintech/Lending.
+KPI-028,Reserves (%),BS,Risk,ratio,%,GIVEN,,False,FINTECH_LENDING,6.2,3,Sector: Fintech/Lending.
+KPI-029,Avg. Guarantee Value,BS,Assets,currency,USD,GIVEN,,False,PROPTECH,0.0,3,Sector: Proptech / garantías de arriendo.
+KPI-030,Avg. Lease Value,BS,Assets,currency,USD,GIVEN,,False,PROPTECH,0.0,3,Sector: Proptech.
+KPI-031,Properties under Management,BS,Volume,integer,units,GIVEN,,False,PROPTECH,0.0,3,Sector: Proptech.
+KPI-032,Gross Written Premium,BS,Volume,currency,USD,GIVEN,,False,INSURTECH,0.0,3,Sector: Insurtech.
+KPI-033,Back book vs Front book,BS,Portfolio Mix,ratio,%,GIVEN,,False,FINTECH_LENDING,0.0,3,Sector: Fintech/Lending.
+KPI-034,Total Debt,BS,Liabilities,currency,USD,GIVEN,,False,ALL,0.0,2,NUEVO — Deuda total (financial + operativa). Triangulación con Cash y Equity.
+KPI-035,Burn,CF,Cash Management,currency,USD,GIVEN,,True,ALL,62.5,1,Net Burn mensual (negativo = burning cash). Input 2 para Runway.
+KPI-036,Runway (months),CF,Cash Management,float,months,SILVER,"SAFE_DIVIDE(cash, ABS(AVG(burn) OVER (PARTITION BY company ORDER BY period ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)))",False,ALL,100.0,1,Ventana 3M de Burn. Estandarizado — NO confiar en Excel. physics_violation si > 500m.
+KPI-037,Burn Multiple,CF,Efficiency,float,x,SILVER,"SAFE_DIVIDE(quarterly_burn, quarterly_new_arr)",False,ALL,62.5,2,Quarterly Burn / Quarterly New ARR.
+KPI-038,Disbursed Loans,CF,Lending Flows,currency,USD,GIVEN,,False,FINTECH_LENDING,6.2,3,Sector: Fintech/Lending.
+KPI-039,New Loans Financed in Month,CF,Lending Flows,integer,count,GIVEN,,False,FINTECH_LENDING,6.2,3,Sector: Fintech/Lending.
+KPI-040,# Credits disbursed,CF,Lending Flows,integer,count,GIVEN,,False,FINTECH_LENDING,0.0,3,Sector: Fintech/Lending.
+KPI-041,$ Credit disbursed,CF,Lending Flows,currency,USD,GIVEN,,False,FINTECH_LENDING,0.0,3,Sector: Fintech/Lending.
+KPI-042,Writeoffs in period,CF,Risk Flows,currency,USD,GIVEN,,False,FINTECH_LENDING,6.2,3,Sector: Fintech/Lending.
+KPI-043,Offload,CF,Lending Flows,currency,USD,GIVEN,,False,FINTECH_LENDING,0.0,3,Sector: Fintech/Lending. Cartera vendida o transferida.
+KPI-044,Closed Guarantees,CF,Guarantee Flows,integer,count,GIVEN,,False,PROPTECH,0.0,3,Sector: Proptech.
+KPI-045,Renewal Guarantees,CF,Guarantee Flows,integer,count,GIVEN,,False,PROPTECH,0.0,3,Sector: Proptech.
+KPI-046,Operating Cash Flow,CF,Cash Management,currency,USD,GIVEN,,False,ALL,0.0,2,NUEVO — Flujo de caja operativo. Triangulación: Burn ≈ -Operating Cash Flow.
+KPI-047,MRR,UE,SaaS Core,currency,USD,GIVEN,,True,SAAS_SUBSCRIPTION,25.0,1,Monthly Recurring Revenue. Innegociable para SaaS. Net Revenue NCLC.
+KPI-048,ARR,UE,SaaS Core,currency,USD,SILVER,mrr * 12,False,SAAS_SUBSCRIPTION,31.2,1,MRR × 12. Recalcular.
+KPI-049,Booked MRR,UE,SaaS Core,currency,USD,GIVEN,,False,SAAS_SUBSCRIPTION,6.2,2,MRR contratado (puede diferir del realizado).
+KPI-050,Booked ARR,UE,SaaS Core,currency,USD,SILVER,booked_mrr * 12,False,SAAS_SUBSCRIPTION,12.5,2,Booked MRR × 12.
+KPI-051,ACV,UE,SaaS Core,currency,USD,SILVER,"SAFE_DIVIDE(revenue, invoiced_clients)",False,SAAS_B2B,37.5,2,Annual Contract Value = Revenue / Invoiced Clients.
+KPI-052,NDR (12M),UE,Retention,ratio,%,GIVEN,,False,SAAS_SUBSCRIPTION,37.5,2,Net Dollar Retention a 12 meses.
+KPI-053,CAC,UE,Acquisition,currency,USD,GIVEN,,False,ALL,0.0,2,Customer Acquisition Cost.
+KPI-054,Blended CAC,UE,Acquisition,currency,USD,GIVEN,,False,ALL,0.0,2,CAC blended (paid + organic).
+KPI-055,CAC Payback (months),UE,Acquisition,float,months,GIVEN,,False,ALL,12.5,2,Meses para recuperar el CAC.
+KPI-056,LTV/CAC (x),UE,Acquisition,float,x,GIVEN,,False,ALL,12.5,2,LTV / CAC ratio.
+KPI-057,Rule of 40,UE,SaaS Efficiency,float,score,SILVER,annual_revenue_growth + l12m_ebitda_margin,False,SAAS_SUBSCRIPTION,56.2,2,Annual Rev Growth % + L12M EBITDA Margin %.
+KPI-058,SaaS Magic Number,UE,SaaS Efficiency,float,x,SILVER,"SAFE_DIVIDE(revenue_q1 - revenue_q0, sm_expense_q0)",False,SAAS_SUBSCRIPTION,50.0,2,(Q1 Rev - Q0 Rev) / Q0 S&M Expense.
+KPI-059,Revenue/Employee,UE,Efficiency,currency,USD,SILVER,"SAFE_DIVIDE(SUM(revenue) OVER ltm, AVG(employees) OVER ltm)",False,ALL,100.0,2,LTM Revenue / LTM Average Employees.
+KPI-060,# New Customers,UE,Growth,integer,count,GIVEN,,False,ALL,12.5,2,Nuevos clientes adquiridos en el período.
+KPI-061,# Churn Customers,UE,Retention,integer,count,GIVEN,,False,ALL,12.5,2,Clientes que dieron de baja en el período.
+KPI-062,Client Retention Rate (12M),UE,Retention,ratio,%,GIVEN,,False,ALL,0.0,2,% clientes retenidos en ventana 12M.
+KPI-063,Invoiced Clients,UE,Volume,integer,count,GIVEN,,False,SAAS_B2B,25.0,2,Clientes facturados en el período.
+KPI-064,Active Clients,UE,Volume,integer,count,GIVEN,,False,ALL,6.2,2,Clientes activos en el período.
+KPI-065,Clients Activated in Period,UE,Volume,integer,count,GIVEN,,False,ALL,6.2,3,Clientes activados (onboarding completado).
+KPI-066,GMV,UE,Marketplace Volume,currency,USD,GIVEN,,False,MARKETPLACE,0.0,2,Gross Merchandise Value.
+KPI-067,GTV,UE,Marketplace Volume,currency,USD,GIVEN,,False,MARKETPLACE,6.2,2,Gross Transaction Value.
+KPI-068,TPV,UE,Marketplace Volume,currency,USD,GIVEN,,False,FINTECH_PAYMENTS,0.0,2,Total Payment Volume.
+KPI-069,New GMV,UE,Marketplace Volume,currency,USD,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-070,GMV Retention Rate (12M),UE,Retention,ratio,%,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-071,GMV/Buyer,UE,Efficiency,currency,USD,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-072,% of GMV Financed w/ Credit,UE,Marketplace Volume,ratio,%,GIVEN,,False,MARKETPLACE_FINTECH,0.0,3,Sector: Marketplace con crédito.
+KPI-073,AOV,UE,Marketplace,currency,USD,GIVEN,,False,MARKETPLACE,0.0,3,Average Order Value.
+KPI-074,Total Buyers,UE,Marketplace,integer,count,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-075,New Buyers,UE,Marketplace,integer,count,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-076,Total Orders,UE,Marketplace,integer,count,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-077,New Orders,UE,Marketplace,integer,count,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-078,Repeat Purchase Rate,UE,Retention,ratio,%,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-079,Avg. Frequency of Purchase (days),UE,Engagement,float,days,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-080,Avg. Orders per Buyer,UE,Engagement,float,x,GIVEN,,False,MARKETPLACE,0.0,3,Sector: Marketplace.
+KPI-081,APR (%),UE,Lending Economics,ratio,%,GIVEN,,False,FINTECH_LENDING,6.2,3,Annual Percentage Rate.
+KPI-082,IRR Promedio de Portafolios,UE,Lending Economics,ratio,%,GIVEN,,False,FINTECH_LENDING,0.0,3,Sector: Fintech/Lending.
+KPI-083,Default Rate,UE,Risk,ratio,%,GIVEN,,False,PROPTECH_FINTECH,0.0,2,Non-paying tenants / total. También aplica a lending.
+KPI-084,Default Rate (NPL %),UE,Risk,ratio,%,GIVEN,,False,FINTECH_LENDING,0.0,2,Non-Performing Loans %.
+KPI-085,Delinquencies dpd>90,UE,Risk,currency,USD,GIVEN,,False,FINTECH_LENDING,6.2,2,Deuda en mora > 90 días. Valor absoluto.
+KPI-086,Delinquencies dpd>90 (%),UE,Risk,ratio,%,GIVEN,,False,FINTECH_LENDING,6.2,2,Deuda en mora > 90 días como % del portafolio.
+KPI-087,PAR 30,UE,Risk,ratio,%,GIVEN,,False,FINTECH_LENDING,6.2,2,Portfolio at Risk > 30 días.
+KPI-088,PAR 60,UE,Risk,ratio,%,GIVEN,,False,FINTECH_LENDING,6.2,2,Portfolio at Risk > 60 días.
+KPI-089,Moratoria 30 dias,UE,Risk,ratio,%,GIVEN,,False,FINTECH_LENDING,0.0,3,Normalizado desde 'Moratoria 30 días' (encoding fix requerido).
+KPI-090,Moratoria 60 dias,UE,Risk,ratio,%,GIVEN,,False,FINTECH_LENDING,0.0,3,Normalizado desde 'Moratorioa 60 días' (typo + encoding fix requerido).
+KPI-091,Loss Rate,UE,Risk,ratio,%,GIVEN,,False,INSURTECH,0.0,3,Amount paid / total covered amount.
+KPI-092,Loss Ratio,UE,Risk,ratio,%,GIVEN,,False,INSURTECH,0.0,3,Amount paid / total premium collected.
+KPI-093,Policy Renewal Rate,UE,Retention,ratio,%,GIVEN,,False,INSURTECH,0.0,3,Sector: Insurtech.
+KPI-094,Acquired Brands,UE,Marketplace Growth,integer,count,GIVEN,,False,MARKETPLACE,6.2,3,Sector: Marketplace / Aggregator.
+KPI-095,Acquired Sellers,UE,Marketplace Growth,integer,count,GIVEN,,False,MARKETPLACE,6.2,3,Sector: Marketplace.
+KPI-096,Active Borkers,UE,Marketplace Growth,integer,count,GIVEN,,False,MARKETPLACE_TRANSPORT,0.0,3,Normalizar typo: 'Borkers' → 'Brokers' en schema futuro.
+KPI-097,Monthly Active Carriers,UE,Marketplace Growth,integer,count,GIVEN,,False,MARKETPLACE_TRANSPORT,6.2,3,Sector: Marketplace / Logística.
+KPI-098,Number of Applications,UE,Funnel,integer,count,GIVEN,,False,FINTECH_LENDING,6.2,3,Sector: Fintech/Lending.
+KPI-099,Approved Applications,UE,Funnel,integer,count,GIVEN,,False,FINTECH_LENDING,6.2,3,Sector: Fintech/Lending.
+KPI-100,Churn Rate (%),UE,Retention,ratio,%,SILVER,"SAFE_DIVIDE(churn_customers, active_clients_prior_period)",False,ALL,0.0,2,NUEVO — # Churn / Clientes inicio período. Complementa # Churn Customers.
+KPI-101,Employees,HC,Headcount,integer,FTEs,GIVEN,,True,ALL,37.5,1,FTEs totales (full-time equivalents).
+KPI-102,Female Employees,HC,DEI,integer,count,GIVEN,,False,ALL,12.5,3,Empleadas mujeres. Para reporte ESG/DEI.
+KPI-103,Total Salary Cost,HC,Headcount,currency,USD,GIVEN,,False,ALL,0.0,2,NUEVO — Costo total de nómina mensual.
+KPI-104,Contractors,HC,Headcount,integer,count,GIVEN,,False,ALL,0.0,3,NUEVO — Contratistas / freelancers activos.
+KPI-105,Engineers Headcount,HC,Headcount,integer,count,GIVEN,,False,ALL,0.0,3,NUEVO — Headcount del equipo de ingeniería.
+KPI-106,Sales Headcount,HC,Headcount,integer,count,GIVEN,,False,ALL,0.0,3,NUEVO — Headcount de ventas (para cruzar con S&M Expense).
+KPI-107,Avg Salary per Employee,HC,Efficiency,currency,USD,SILVER,"SAFE_DIVIDE(total_salary_cost, employees)",False,ALL,0.0,3,NUEVO — Total Salary Cost / Employees. SILVER.
+KPI-108,Headcount Growth Rate,HC,Growth,ratio,%,SILVER,"SAFE_DIVIDE(employees - LAG(employees) OVER w, LAG(employees) OVER w)",False,ALL,0.0,3,NUEVO — MoM Headcount Growth. SILVER.
+KPI-109,Revenue per FTE,HC,Efficiency,currency,USD,SILVER,"SAFE_DIVIDE(revenue, employees)",False,ALL,0.0,2,NUEVO — Versión mensual de Revenue/Employee. Complementa KPI-059.

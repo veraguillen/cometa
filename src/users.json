@@ -1,0 +1,24 @@
+{
+  "users": [
+    {
+      "id": "FND-xUGbbQ",
+      "email": "founder@demo.com",
+      "password": "$2b$12$sEtF4LYWq1M8RBk1.4Ap8udbYIpVy/8g9gcilAjqP.yxSQp8I4JNa",
+      "name": "Founder Demo",
+      "role": "FOUNDER",
+      "company_id": "C010",
+      "company_slug": "quinio",
+      "company_name": "Quinio",
+      "status": "ACTIVE"
+    },
+    {
+      "id": "ANA-YqUifw",
+      "email": "analista@cometa.vc",
+      "password": "$2b$12$nSSayvAAjsjE7rNMXvrUuOML3gWsChpPgdfWCrZnnOz9KKchXTb3S",
+      "name": "Analista Cometa",
+      "role": "ANALISTA",
+      "company_id": "COMETA_INTERNAL",
+      "status": "ACTIVE"
+    }
+  ]
+}

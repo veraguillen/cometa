@@ -1,0 +1,320 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* ── Shadcn/UI token layer ── */
+:root {
+  --background:              oklch(0.08 0 0);
+  --foreground:              oklch(0.97 0 0);
+  --card:                    oklch(0.1 0 0);
+  --card-foreground:         oklch(0.97 0 0);
+  --popover:                 oklch(0.1 0 0);
+  --popover-foreground:      oklch(0.97 0 0);
+  --primary:                 oklch(0.605 0.155 162);   /* #00A86B emerald */
+  --primary-foreground:      oklch(1 0 0);
+  --secondary:               oklch(0.18 0 0);
+  --secondary-foreground:    oklch(0.97 0 0);
+  --muted:                   oklch(0.18 0 0);
+  --muted-foreground:        oklch(0.62 0 0);
+  --accent:                  oklch(0.18 0 0);
+  --accent-foreground:       oklch(0.97 0 0);
+  --destructive:             oklch(0.577 0.245 27.325);
+  --destructive-foreground:  oklch(0.97 0 0);
+  --border:                  oklch(0.25 0 0);
+  --input:                   oklch(0.2 0 0);
+  --ring:                    oklch(0.605 0.155 162);
+  --radius:                  0.625rem;
+  --confidence-high:         oklch(0.75 0.17 150);
+  --confidence-medium:       oklch(0.78 0.18 80);
+  --confidence-low:          oklch(0.65 0.22 25);
+  --sidebar:                 oklch(0.97 0 0);
+  --sidebar-foreground:      oklch(0.15 0 0);
+  --sidebar-primary:         oklch(0.605 0.155 162);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent:          oklch(0.14 0 0);
+  --sidebar-accent-foreground: oklch(0.97 0 0);
+  --sidebar-border:          oklch(0.22 0 0);
+  --sidebar-ring:            oklch(0.783 0.107 210);
+}
+
+/* ── Tailwind color token mapping ── */
+@theme inline {
+  --color-background:              var(--background);
+  --color-foreground:              var(--foreground);
+  --color-card:                    var(--card);
+  --color-card-foreground:         var(--card-foreground);
+  --color-popover:                 var(--popover);
+  --color-popover-foreground:      var(--popover-foreground);
+  --color-primary:                 var(--primary);
+  --color-primary-foreground:      var(--primary-foreground);
+  --color-secondary:               var(--secondary);
+  --color-secondary-foreground:    var(--secondary-foreground);
+  --color-muted:                   var(--muted);
+  --color-muted-foreground:        var(--muted-foreground);
+  --color-accent:                  var(--accent);
+  --color-accent-foreground:       var(--accent-foreground);
+  --color-destructive:             var(--destructive);
+  --color-destructive-foreground:  var(--destructive-foreground);
+  --color-border:                  var(--border);
+  --color-input:                   var(--input);
+  --color-ring:                    var(--ring);
+  --radius-sm:                     calc(var(--radius) - 4px);
+  --radius-md:                     calc(var(--radius) - 2px);
+  --radius-lg:                     var(--radius);
+  --radius-xl:                     calc(var(--radius) + 4px);
+  --color-sidebar:                 var(--sidebar);
+  --color-sidebar-foreground:      var(--sidebar-foreground);
+  --color-sidebar-primary:         var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent:          var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border:          var(--sidebar-border);
+  --color-sidebar-ring:            var(--sidebar-ring);
+  --color-confidence-high:         var(--confidence-high);
+  --color-confidence-medium:       var(--confidence-medium);
+  --color-confidence-low:          var(--confidence-low);
+  /* Typography — Helvetica Now Display first, Inter as system fallback */
+  --font-sans: "Helvetica Now Display", "Helvetica Neue", Helvetica, Inter, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "Geist Mono", monospace;
+}
+
+/* ── Base resets ── */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    box-sizing: border-box;
+  }
+  html, body { height: 100%; }
+  body {
+    background-color:  var(--cometa-bg);
+    background-image:  var(--cometa-bg-gradient);
+    background-repeat: no-repeat;
+    background-size:   100% 100vh;
+    color:             var(--cometa-fg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-weight: 400;
+  }
+  /* Titles: Extra Light (100) */
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: 100;
+    letter-spacing: -0.02em;
+  }
+  ::selection { background: rgba(0, 168, 107, 0.18); }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--cometa-accent);
+    outline-offset: 3px;
+  }
+}
+
+/* ── Theme transition — smooth color shifts when ThemeSwitcher fires ── */
+/*    Applies to body and all utility classes that consume theme CSS vars.  */
+/*    Property-specific (not transition: all) to avoid interfering with     */
+/*    Framer Motion animations that manage transform/opacity directly.       */
+
+body {
+  transition:
+    background-color 500ms ease,
+    background       500ms ease,
+    color            500ms ease;
+}
+
+.theme-card,
+.glass,
+.glass-card,
+.kpi-card,
+.theme-fg,
+.theme-fg-muted,
+.theme-accent,
+.geometric-circle,
+.geometric-cube,
+.cometa-glow {
+  transition:
+    background-color 500ms ease,
+    background       500ms ease,
+    color            500ms ease,
+    border-color     500ms ease,
+    box-shadow       500ms ease;
+}
+
+/* ── Glassmorphism utilities ── */
+.glass {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.glass-card {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ── KPI value typography ── */
+.kpi-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  font-weight: 100;
+}
+
+/* ── Cometa branding — logo protection area ── */
+.cometa-logo-protect {
+  padding: 0.75em;
+  display: inline-flex;
+  align-items: center;
+}
+
+@keyframes cometa-spin  { to { transform: rotate(360deg); } }
+
+@keyframes cometa-fade-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.cometa-fade-in { animation: cometa-fade-in 0.4s ease-out both; }
+
+/* cometa-pulse — subtle red throb for "missing" heatmap cells */
+@keyframes cometa-pulse {
+  0%, 100% { opacity: 1;    box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+  50%       { opacity: 0.8; box-shadow: 0 0 0 4px rgba(239,68,68,0.18); }
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar       { width: 5px; }
+::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--cometa-accent) 25%, transparent); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--cometa-accent) 45%, transparent); }
+
+/* ════════════════════════════════════════════════════════════
+   COMETA THEME TOKENS
+   ════════════════════════════════════════════════════════════ */
+
+/* ── [Pearl & Emerald] — Claridad institucional y precisión ── */
+/* Applied to: /analyst/*, /founder/*, /success (private routes post-login).  */
+/* :root keeps pearl as graceful fallback; [data-theme="pearl"] is the        */
+/* explicit selector used when ResetTheme or ThemeProvider set the attribute.  */
+:root,
+[data-theme="pearl"] {
+  --cometa-bg:            #FFFFFF;
+  --cometa-bg-gradient:   linear-gradient(160deg, #F8F9FA 0%, #FFFFFF 55%, #F0F4F2 100%);
+  --cometa-fg:            #212529;
+  --cometa-fg-muted:      #6C757D;
+  --cometa-card-bg:       #F8F9FA;
+  --cometa-card-border:   rgba(0,0,0,0.07);
+  --cometa-accent:        #00A86B;
+  --cometa-accent-fg:     #FFFFFF;
+  --cometa-dark-blue:     #1A3C34;
+}
+:root ::-webkit-scrollbar-thumb,
+[data-theme="pearl"] ::-webkit-scrollbar-thumb { background: rgba(0,168,107,0.30); }
+
+/* ── [Obsidiana & Steel] — Poder e innovación digital ── */
+[data-theme="obsidian"] {
+  --cometa-bg:            #000000;
+  --cometa-bg-gradient:   linear-gradient(160deg, #00237F 0%, #000814 55%, #000000 100%);
+  --cometa-fg:            #FFFFFF;
+  --cometa-fg-muted:      rgba(255,255,255,0.42);
+  --cometa-card-bg:       rgba(255,255,255,0.04);
+  --cometa-card-border:   rgba(255,255,255,0.08);
+  --cometa-accent:        #64CAE4;
+  --cometa-accent-fg:     #000000;
+  --cometa-dark-blue:     #00237F;
+}
+[data-theme="obsidian"] ::-webkit-scrollbar-thumb { background: rgba(100,202,228,0.35); }
+
+/* ── [Ivory & Slate] — Claridad de banca privada moderna ── */
+[data-theme="slate"] {
+  --cometa-bg:            #F4F1EB;
+  --cometa-bg-gradient:   linear-gradient(160deg, #FAFAF8 0%, #F4F1EB 55%, #EDE8DF 100%);
+  --cometa-fg:            #000000;
+  --cometa-fg-muted:      rgba(0,0,0,0.52);
+  --cometa-card-bg:       rgba(255,255,255,0.88);
+  --cometa-card-border:   rgba(100,116,139,0.18);
+  --cometa-accent:        #1E3A5F;
+  --cometa-accent-fg:     #FFFFFF;
+  --cometa-dark-blue:     #5A6E82;
+}
+[data-theme="slate"] ::-webkit-scrollbar-thumb { background: rgba(236,229,188,0.6); }
+
+/* ── [Deep Umber & Gold] — Riqueza estructurada y madurez ── */
+[data-theme="umber"] {
+  --cometa-bg:            #1A0F07;
+  --cometa-bg-gradient:   linear-gradient(160deg, #3D2010 0%, #1A0F07 55%, #0D0500 100%);
+  --cometa-fg:            #F0EDE6;
+  --cometa-fg-muted:      rgba(240,237,230,0.45);
+  --cometa-card-bg:       rgba(0,0,0,0.42);
+  --cometa-card-border:   rgba(236,229,188,0.12);
+  --cometa-accent:        #ECE5BC;
+  --cometa-accent-fg:     #1A0F07;
+  --cometa-dark-blue:     #3D2010;
+}
+[data-theme="umber"] ::-webkit-scrollbar-thumb { background: rgba(236,229,188,0.35); }
+
+/* ── Theme-aware utility classes ── */
+.theme-card {
+  background:          var(--cometa-card-bg);
+  border:              1px solid var(--cometa-card-border);
+  backdrop-filter:     blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.theme-fg       { color: var(--cometa-fg); }
+.theme-fg-muted { color: var(--cometa-fg-muted); }
+.theme-accent   { color: var(--cometa-accent); }
+
+/* ── Typography weight utilities ── */
+/* Extra Light — for KPI numbers and page titles */
+.font-cometa-thin        { font-weight: 100; }
+.font-cometa-extralight  { font-weight: 200; }
+
+/* ── KPI card (hover accent glow) ── */
+.kpi-card {
+  background:          var(--cometa-card-bg);
+  border:              1px solid var(--cometa-card-border);
+  backdrop-filter:     blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius:       1rem;
+  padding:             1.25rem;
+  transition:          background 500ms ease, border-color 300ms, box-shadow 300ms;
+}
+.kpi-card:hover {
+  border-color: color-mix(in srgb, var(--cometa-accent) 40%, transparent);
+  box-shadow:   0 0 24px color-mix(in srgb, var(--cometa-accent) 10%, transparent);
+}
+
+/* ── Geometric decoration helpers ── */
+.geometric-circle {
+  border:         1px solid color-mix(in srgb, var(--cometa-accent) 7%, transparent);
+  border-radius:  50%;
+  position:       absolute;
+  pointer-events: none;
+}
+.geometric-cube {
+  border:         1px solid color-mix(in srgb, var(--cometa-accent) 5%, transparent);
+  position:       absolute;
+  pointer-events: none;
+  transform:      rotate(45deg);
+}
+
+/* ── Accent glow ── */
+.cometa-glow {
+  box-shadow:
+    0 0 40px color-mix(in srgb, var(--cometa-accent) 12%, transparent),
+    0 0 80px color-mix(in srgb, var(--cometa-accent) 6%,  transparent);
+}
+
+/* ── KPI trend colors ── */
+.text-kpi-positive { color: #4ade80; }
+.text-kpi-negative { color: #f87171; }
+.text-kpi-neutral  { color: var(--cometa-fg-muted); }
+
+/* ── Thin scrollbar (sidebar, terminals) ── */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--cometa-card-border) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar       { width: 4px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background:    color-mix(in srgb, var(--cometa-accent) 30%, transparent);
+  border-radius: 2px;
+}

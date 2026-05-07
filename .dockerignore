@@ -1,0 +1,41 @@
+# ─── Secretos y credenciales (NUNCA en la imagen) ─────────────────────────────
+.env
+.env.*
+cometa_key.json
+client_secret*.json
+*.pem
+*.key
+
+# ─── Entornos virtuales y dependencias locales ─────────────────────────────────
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# ─── Frontend (se construye en su propio servicio) ─────────────────────────────
+frontend/
+
+# ─── Datos (no van en la imagen) ───────────────────────────────────────────────
+data/
+temp/
+logs_*.txt
+*.log
+
+# ─── Git y herramientas de desarrollo ──────────────────────────────────────────
+.git/
+.gitignore
+.github/
+.claude/
+cloudbuild.yaml
+
+# ─── Documentación, tests y scripts de deploy ──────────────────────────────────
+docs/
+tests/
+scripts/
+deploy/
+README.md
+*.md
+CLAUDE.md
+env.template
