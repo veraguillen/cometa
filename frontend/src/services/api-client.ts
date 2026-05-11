@@ -36,7 +36,9 @@ export const apiClient = axios.create({
   withCredentials: false,
 });
 
-// ── Interceptor de petición: añade Bearer token ───────────────────────────────
+// ── Interceptor de petición: añade Bearer token + header de origen ────────────
+// X-Cometa-Source es requerido por _verify_origin en el backend para endpoints
+// que no usan Cloud IAP (chat, stream). Sin él el backend devuelve 403.
 apiClient.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -44,6 +46,7 @@ apiClient.interceptors.request.use((config) => {
       config.headers["Authorization"] = `Bearer ${token}`;
     }
   }
+  config.headers["X-Cometa-Source"] = "analyst-portal";
   // FormData: eliminar el Content-Type por defecto (application/json) para que
   // el navegador lo genere como multipart/form-data con el boundary correcto.
   if (config.data instanceof FormData) {
@@ -181,7 +184,8 @@ export async function apiStream(
   const res   = await fetch(`${API_BASE_URL}${url}`, {
     method:  "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type":    "application/json",
+      "X-Cometa-Source": "analyst-portal",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
