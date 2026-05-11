@@ -25,8 +25,6 @@ Nota de migración (Phase 3):
   analyst y admin, las funciones GCS se promoverán a src/core/gcs.py y
   las de Gemini a src/core/gemini_processor.py para compartirlas.
 """
-from __future__ import annotations
-
 import copy
 import hashlib
 import json
@@ -667,7 +665,7 @@ def _apply_contract_normalization(
 # ROUTE HANDLERS
 # ═════════════════════════════════════════════════════════════════════════════
 
-@router.post("/upload")
+@router.post("/upload", response_model=None)
 @limiter.limit("20/minute")
 async def upload_pdf(
     request: Request,
