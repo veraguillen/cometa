@@ -258,8 +258,8 @@ async def request_validation_handler(
 async def _startup():
     """Bootstrap BigQuery analytics schema once at server start.
 
-    Si no se puede conectar a cometa-mvp.BD_Cometa el servidor se detiene
-    inmediatamente con un error claro — nunca arranca contra un dataset incorrecto.
+    Verifica conectividad con el dataset configurado en BIGQUERY_DATASET.
+    Si la conexión falla el servidor se detiene con un error claro.
     """
     import asyncio
     import sys

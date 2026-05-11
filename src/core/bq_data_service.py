@@ -32,8 +32,12 @@ from google.oauth2 import service_account
 
 log = logging.getLogger(__name__)
 
-# ── Constante de dataset — única fuente de verdad ─────────────────────────────
-_DATASET = "cometa-mvp.BD_Cometa_Dev"
+# ── Dataset — dinámico vía variable de entorno ────────────────────────────────
+# Lee GOOGLE_PROJECT_ID (o GOOGLE_CLOUD_PROJECT como fallback) y BIGQUERY_DATASET.
+# El valor se resuelve una sola vez al importar el módulo; en Cloud Run las vars
+# de entorno están disponibles antes de que el proceso arranque.
+_PROJECT = os.getenv("GOOGLE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT", "cometa-mvp")
+_DATASET = f"{_PROJECT}.{os.getenv('BIGQUERY_DATASET', 'BD_Cometa')}"
 BQ_DATASET = _DATASET  # alias público para uso en routers externos
 
 # TTL de la caché en memoria para get_portfolio_catalog().
@@ -56,13 +60,6 @@ _BUCKET_ID_TO_VERTICAL: dict[str, str] = {
     "B09": "PROPTECH",
     "B10": "GENERAL",
 }
-
-# Fail-safe: si alguien apunta a producción por error, el módulo no carga.
-if not _DATASET.lower().endswith("_dev"):
-    raise RuntimeError(
-        f"bq_data_service apuntando a dataset no-Dev: '{_DATASET}'. "
-        "Modifica _DATASET para que termine en '_dev'."
-    )
 
 
 # ── Excepciones de dominio ────────────────────────────────────────────────────
