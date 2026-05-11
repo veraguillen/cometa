@@ -45,7 +45,7 @@ ENV NODE_ENV=production
 # HOSTNAME=0.0.0.0 obliga al servidor a escuchar en todas las interfaces;
 # sin esto Next.js standalone hace bind solo a 127.0.0.1 y Cloud Run
 # no puede alcanzarlo → "failed to start and listen on PORT".
-ENV PORT=8080
+ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
 COPY --from=builder /app/.next/standalone ./
@@ -57,7 +57,7 @@ RUN groupadd --system --gid 1001 nodejs \
  && useradd  --system --uid 1001 --gid 1001 nextjs
 USER nextjs
 
-EXPOSE 8080
+EXPOSE 3000
 
 # server.js generado por Next.js standalone.
 # Exec form (sin shell wrapper): Node recibe SIGTERM directamente de Cloud Run.

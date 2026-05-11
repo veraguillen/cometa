@@ -50,12 +50,6 @@ ENV PORT=8080 \
     PYTHONDONTWRITEBYTECODE=1
 EXPOSE 8080
 
-# Health check: Cloud Run probe + load-balancer readiness
-# Interval 30s, 3 retries → instance marked unhealthy after ~90 s of failures.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" \
-    || exit 1
-
 USER appuser
 
 # --timeout-keep-alive 120: cubre SSE streams del /api/chat/stream endpoint.
