@@ -78,6 +78,8 @@ steps:
       - NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}
       - --build-arg
       - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${_NEXT_PUBLIC_GOOGLE_CLIENT_ID}
+      - --build-arg
+      - NEXT_PUBLIC_LOOKER_URL=${_NEXT_PUBLIC_LOOKER_URL}
       - frontend/
 
   # ── PASO 3: Push Backend ──────────────────────────────────────────────────────

@@ -28,6 +28,11 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID=""
 ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
 
+# Looker Studio embed URL — quemada en el bundle por Next.js en tiempo de build.
+# Si no se pasa --build-arg, el componente usa la URL de fallback hardcodeada.
+ARG NEXT_PUBLIC_LOOKER_URL=""
+ENV NEXT_PUBLIC_LOOKER_URL=$NEXT_PUBLIC_LOOKER_URL
+
 # next.config.ts tiene output: 'standalone' → genera .next/standalone/server.js
 RUN npm run build
 
