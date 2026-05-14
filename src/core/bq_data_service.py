@@ -192,10 +192,16 @@ class BQDataService:
     se necesita no bloquear el event loop.
     """
 
+    # TTL para el caché de contexto de usuario (5 min por defecto).
+    # Evita que cada request de navegación golpee BQ para validar identidad.
+    _USER_CTX_TTL: float = 300.0
+
     def __init__(self) -> None:
         # Caché de get_portfolio_catalog() — comparte ciclo de vida con la instancia.
         self._catalog_cache: Optional[list[dict[str, Any]]] = None
         self._catalog_ts:    float = 0.0
+        # Caché de get_user_auth_context(): email → (contexto, expiry_monotonic)
+        self._user_ctx_cache: dict[str, tuple[dict[str, str], float]] = {}
 
     def get_bq_client(self) -> bigquery.Client:
         """Expone el cliente BQ singleton para uso en routers externos."""
@@ -450,6 +456,7 @@ class BQDataService:
         submission_id: Optional[str] = None,
         review_notes:  Optional[str] = None,
         raw_file_path: Optional[str] = None,
+        display_name:  str           = "",
     ) -> dict[str, Any]:
         """
         Inserta atómicamente (secuencial en BQ) una submission y sus KPIs.
@@ -506,6 +513,8 @@ class BQDataService:
         }
         if raw_file_path:
             _sub_record["raw_file_path"] = raw_file_path
+        if display_name.strip():
+            _sub_record["display_name"] = display_name.strip()
         df_sub = pd.DataFrame([_sub_record])
 
         try:
@@ -1007,7 +1016,247 @@ class BQDataService:
             for r in rows
         ]
 
-    # ── 8. update_submission_status ───────────────────────────────────────────
+    # ── 8. list_submissions ───────────────────────────────────────────────────
+
+    def list_submissions(
+        self,
+        *,
+        company_id: Optional[str] = None,
+        status:     Optional[str] = None,
+        limit:      int           = 50,
+    ) -> list[dict[str, Any]]:
+        """
+        Lista submissions recientes desde la tabla `submissions`.
+
+        Devuelve metadatos básicos (sin KPIs) para poblar la cola del analista.
+        Filtra opcionalmente por empresa y/o status.
+
+        Returns:
+            Lista de dicts con: submission_id, company_id, status, created_at,
+            display_name, source_file.
+        """
+        filters: list[str] = []
+        params:  list[bigquery.ScalarQueryParameter] = []
+
+        if company_id:
+            filters.append("LOWER(company_id) = LOWER(@company_id)")
+            params.append(bigquery.ScalarQueryParameter("company_id", "STRING", company_id))
+        if status:
+            filters.append("status = @status")
+            params.append(bigquery.ScalarQueryParameter("status", "STRING", status))
+
+        where = ("WHERE " + " AND ".join(filters)) if filters else ""
+        query = f"""
+            SELECT
+                submission_id,
+                company_id,
+                status,
+                CAST(created_at AS STRING) AS created_at,
+                COALESCE(display_name, '')  AS display_name,
+                COALESCE(source_file, '')   AS source_file
+            FROM `{_DATASET}.submissions`
+            {where}
+            ORDER BY created_at DESC
+            LIMIT {limit}
+        """
+        try:
+            rows = list(_client().query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params),
+            ).result())
+            return [dict(r) for r in rows]
+        except GoogleAPIError as exc:
+            raise BQInsertError(f"Error en list_submissions: {exc}") from exc
+
+    # ── 8b. get_submission_with_kpis ─────────────────────────────────────────
+
+    def get_submission_with_kpis(
+        self,
+        submission_id: str,
+    ) -> dict[str, Any]:
+        """
+        Retorna metadatos de una submission junto con todos los KPIs extraídos
+        de la tabla `H` (fact_kpi_values) vinculados por submission_id.
+
+        Args:
+            submission_id: ID de la submission (ej. "S1A2B3C4").
+
+        Returns:
+            Dict con campos de submissions + lista "kpis" con filas de H.
+
+        Raises:
+            BQInsertError: Si la consulta a BQ falla.
+            ValueError:    Si el submission_id no existe.
+        """
+        sid = str(submission_id).strip()
+        param = bigquery.ScalarQueryParameter("sid", "STRING", sid)
+
+        # ── Query 1: metadatos de la submission ──────────────────────────────
+        meta_query = f"""
+            SELECT
+                submission_id,
+                company_id,
+                status,
+                CAST(created_at AS STRING) AS created_at,
+                COALESCE(display_name, '')  AS display_name,
+                COALESCE(source_file, '')   AS source_file
+            FROM `{_DATASET}.submissions`
+            WHERE submission_id = @sid
+            LIMIT 1
+        """
+        # ── Query 2: KPIs con nombre legible + columnas de lineaje ─────────
+        # ai_extracted_value / manual_correction_value pueden no existir en tablas
+        # antiguas; se usan fallbacks COALESCE(col, NULL) que BQ maneja si la
+        # columna existe, y try/except para el caso en que no exista todavía.
+        kpis_query = f"""
+            SELECT
+                h.metric_id,
+                h.value,
+                COALESCE(h.period_id, '')                    AS period_id,
+                COALESCE(CAST(h.period_start AS STRING), '') AS period_start,
+                COALESCE(h.notes, '')                        AS notes,
+                COALESCE(m.metric_name_display, h.metric_id) AS metric_name,
+                COALESCE(m.unit_type, '')                    AS unit,
+                COALESCE(m.vertical, '')                     AS vertical,
+                h.ai_extracted_value,
+                h.manual_correction_value
+            FROM `{_DATASET}.H` h
+            LEFT JOIN `{_DATASET}.dim_metric` m USING (metric_id)
+            WHERE h.submission_id = @sid
+            ORDER BY h.period_id, m.vertical, h.metric_id
+        """
+        _kpis_fallback_query = f"""
+            SELECT
+                h.metric_id,
+                h.value,
+                COALESCE(h.period_id, '')                    AS period_id,
+                COALESCE(CAST(h.period_start AS STRING), '') AS period_start,
+                COALESCE(h.notes, '')                        AS notes,
+                COALESCE(m.metric_name_display, h.metric_id) AS metric_name,
+                COALESCE(m.unit_type, '')                    AS unit,
+                COALESCE(m.vertical, '')                     AS vertical,
+                CAST(NULL AS FLOAT64) AS ai_extracted_value,
+                CAST(NULL AS FLOAT64) AS manual_correction_value
+            FROM `{_DATASET}.H` h
+            LEFT JOIN `{_DATASET}.dim_metric` m USING (metric_id)
+            WHERE h.submission_id = @sid
+            ORDER BY h.period_id, m.vertical, h.metric_id
+        """
+        try:
+            cfg = bigquery.QueryJobConfig(query_parameters=[param])
+            meta_rows = list(_client().query(meta_query, job_config=cfg).result())
+            if not meta_rows:
+                raise ValueError(f"submission_id '{sid}' no encontrado.")
+            meta = dict(meta_rows[0])
+
+            try:
+                kpi_rows = list(_client().query(kpis_query, job_config=cfg).result())
+            except GoogleAPIError:
+                # Columnas de lineaje aún no existen — usar query de fallback
+                kpi_rows = list(_client().query(_kpis_fallback_query, job_config=cfg).result())
+
+            meta["kpis"]      = [dict(r) for r in kpi_rows]
+            meta["kpi_count"] = len(meta["kpis"])
+            return meta
+        except ValueError:
+            raise
+        except GoogleAPIError as exc:
+            raise BQInsertError(f"Error en get_submission_with_kpis: {exc}") from exc
+
+    # ── 8c. update_submission_kpis ───────────────────────────────────────────
+
+    def update_submission_kpis(
+        self,
+        *,
+        submission_id: str,
+        corrections:   list[dict[str, Any]],   # [{metric_id, period_id, period_start, value}]
+        approved_by:   str,
+        approve:       bool = True,
+    ) -> dict[str, Any]:
+        """
+        Aplica las correcciones manuales del analista sobre la tabla H.
+
+        Cada corrección hace un DML UPDATE en `H` filtrado por
+        (submission_id, metric_id, period_id).  Las filas que no aparezcan
+        en `corrections` se dejan intactas.
+
+        Después de las correcciones, marca la submission como VALIDATED
+        añadiendo una nota con el email del analista.
+
+        Args:
+            submission_id: ID de la submission a corregir.
+            corrections:   Lista de dicts con:
+                             metric_id    — ID canónico de la métrica
+                             period_id    — ej. "P2025Q1M04"
+                             period_start — "YYYY-MM-DD" (filtro de partición BQ)
+                             value        — valor corregido (float)
+            approved_by:   Email del analista que aprueba.
+
+        Returns:
+            {"submission_id": str, "corrections_applied": int, "status": "VALIDATED"}
+
+        Raises:
+            BQInsertError: Si algún UPDATE falla.
+        """
+        client  = _client()
+        applied = 0
+
+        for corr in corrections:
+            mid   = str(corr["metric_id"])
+            pid   = str(corr["period_id"])
+            ps    = str(corr.get("period_start", ""))[:10]   # YYYY-MM-DD
+            value = float(corr["value"])
+
+            dml = f"""
+                UPDATE `{_DATASET}.H`
+                SET
+                    value                  = @value,
+                    manual_correction_value = @value,
+                    notes                  = CONCAT(COALESCE(notes, ''), ' [corregido por {approved_by}]'),
+                    value_status           = 'CORRECTED'
+                WHERE submission_id  = @sid
+                  AND metric_id      = @mid
+                  AND period_id      = @pid
+                  AND period_start   = @ps
+            """
+            params = [
+                bigquery.ScalarQueryParameter("value", "FLOAT64", value),
+                bigquery.ScalarQueryParameter("sid",   "STRING",  submission_id),
+                bigquery.ScalarQueryParameter("mid",   "STRING",  mid),
+                bigquery.ScalarQueryParameter("pid",   "STRING",  pid),
+                bigquery.ScalarQueryParameter("ps",    "DATE",    ps),
+            ]
+            try:
+                job = client.query(
+                    dml,
+                    job_config=bigquery.QueryJobConfig(query_parameters=params),
+                )
+                job.result()
+                applied += job.num_dml_affected_rows or 0
+            except GoogleAPIError as exc:
+                raise BQInsertError(
+                    f"Error al corregir metric_id={mid} period={pid}: {exc}"
+                ) from exc
+
+        # Marcar como VALIDATED solo si el analista lo solicita explícitamente
+        if approve:
+            self.update_submission_status(
+                submission_id=submission_id,
+                status="VALIDATED",
+                review_notes=f"Validado y corregido por {approved_by} ({applied} correcciones)",
+            )
+
+        log.info(
+            "update_submission_kpis: %d correcciones en submission=%s por %s",
+            applied, submission_id, approved_by,
+        )
+        return {
+            "submission_id":       submission_id,
+            "corrections_applied": applied,
+            "status":              "VALIDATED" if approve else "CORRECTED",
+        }
+
+    # ── 9. update_submission_status ───────────────────────────────────────────
 
     def update_submission_status(
         self,
@@ -1241,6 +1490,7 @@ class BQDataService:
         staging_rows:  list[dict],
         physics_ok:    bool = True,
         physics_notes: Optional[str] = None,
+        display_name:  str  = "",
     ) -> dict[str, Any]:
         """
         Persiste lotes multi-período en fact_kpi_staging con status='PENDING'.
@@ -1281,24 +1531,27 @@ class BQDataService:
         if years_in_batch:
             self._delete_staging_for_company_years(company_id, years_in_batch)
 
+        _display = display_name.strip() if display_name else None
         records = [
             {
-                "staging_id":     staging_id,
-                "company_id":     company_id,
-                "metric_id":      str(row["metric_id"]),
-                "value":          row.get("value"),
-                "period_id":      str(row["period_id"]),
-                "period_start":   _period_id_to_date(str(row["period_id"])).strftime("%Y-%m-%d"),
-                "source_file":    source_file,
-                "submitted_by":   submitted_by,
-                "submitted_at":   now_ts,
-                "status":         "PENDING",
-                "scenario":       "ACTUAL",
-                "physics_ok":     physics_ok,
-                "physics_notes":  str(physics_notes) if physics_notes else None,
-                "validated_by":   None,
-                "validated_at":   None,
-                "rejection_note": None,
+                "staging_id":          staging_id,
+                "company_id":          company_id,
+                "metric_id":           str(row["metric_id"]),
+                "value":               row.get("value"),
+                "ai_extracted_value":  row.get("value"),   # snapshot inmutable del valor de Gemini
+                "period_id":           str(row["period_id"]),
+                "period_start":        _period_id_to_date(str(row["period_id"])).strftime("%Y-%m-%d"),
+                "source_file":         source_file,
+                "display_name":        _display,
+                "submitted_by":        submitted_by,
+                "submitted_at":        now_ts,
+                "status":              "PENDING",
+                "scenario":            "ACTUAL",
+                "physics_ok":          physics_ok,
+                "physics_notes":       str(physics_notes) if physics_notes else None,
+                "validated_by":        None,
+                "validated_at":        None,
+                "rejection_note":      None,
             }
             for row in staging_rows
             if row.get("value") is not None and row.get("metric_id") is not None
@@ -1364,6 +1617,8 @@ class BQDataService:
 
         where = "WHERE " + " AND ".join(filters)
 
+        # display_name: leído si la columna ya existe; NULL como fallback seguro.
+        # Ejecutar primero con la columna; si BQ lanza FieldNotFound, reintentar sin ella.
         query = f"""
             SELECT
                 staging_id,
@@ -1373,6 +1628,27 @@ class BQDataService:
                 period_id,
                 period_start,
                 source_file,
+                display_name,
+                submitted_by,
+                submitted_at,
+                status,
+                physics_ok,
+                physics_notes
+            FROM `{_DATASET}.fact_kpi_staging`
+            {where}
+            ORDER BY submitted_at DESC, staging_id, metric_id
+            LIMIT {limit}
+        """
+        _fallback_query = f"""
+            SELECT
+                staging_id,
+                company_id,
+                metric_id,
+                value,
+                period_id,
+                period_start,
+                source_file,
+                CAST(NULL AS STRING) AS display_name,
                 submitted_by,
                 submitted_at,
                 status,
@@ -1387,9 +1663,21 @@ class BQDataService:
 
         try:
             rows = list(_client().query(query, job_config=job_config).result())
-        except GoogleAPIError as exc:
-            log.error("BQ error en get_staging_pending: %s", exc)
-            raise BQInsertError(f"Error al consultar staging: {exc}") from exc
+        except Exception as exc:
+            # Si la columna display_name no existe aún en BQ, reintentamos con NULL
+            _msg = str(exc).lower()
+            if "display_name" in _msg or "unrecognized name" in _msg or "field" in _msg:
+                log.warning(
+                    "get_staging_pending: columna display_name no disponible en BQ — "
+                    "usando fallback (ejecuta el DDL para activarla): %s", exc,
+                )
+                try:
+                    rows = list(_client().query(_fallback_query, job_config=job_config).result())
+                except GoogleAPIError as exc2:
+                    raise BQInsertError(f"Error al consultar staging: {exc2}") from exc2
+            else:
+                log.error("BQ error en get_staging_pending: %s", exc)
+                raise BQInsertError(f"Error al consultar staging: {exc}") from exc
 
         return [dict(r) for r in rows]
 
@@ -1957,3 +2245,306 @@ class BQDataService:
                 except Exception:
                     pass  # si el retry falla, levanta el error original
             raise
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── 14. dim_users — gestión de usuarios (reemplaza users.json) ────────────
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Columnas de dim_users que se seleccionan en list/get. Orden explícito para
+    # que _row_to_user() siempre reciba los mismos campos.
+    _USER_COLS = (
+        "user_id", "email", "password_hash", "name", "role",
+        "company_id", "company_slug", "company_name",
+        "status", "auth_provider",
+    )
+
+    @staticmethod
+    def _row_to_user(row: bigquery.Row | dict) -> dict[str, Any]:
+        """
+        Convierte una fila de dim_users al formato compatible con UserSchema.
+
+        Mapeo de campos:
+          user_id       → id          (UserSchema usa 'id')
+          password_hash → password    (UserSchema usa 'password')
+          Resto         → sin cambio
+        """
+        d = dict(row) if not isinstance(row, dict) else row
+        return {
+            "id":            d.get("user_id", ""),
+            "email":         d.get("email", ""),
+            "password":      d.get("password_hash", ""),
+            "name":          d.get("name", "") or "",
+            "role":          d.get("role", "FOUNDER"),
+            "company_id":    d.get("company_id", "") or "",
+            "company_slug":  d.get("company_slug", "") or "",
+            "company_name":  d.get("company_name", "") or "",
+            "status":        d.get("status", "ACTIVE"),
+            "auth_provider": d.get("auth_provider", "password"),
+        }
+
+    def migrate_lineage_columns(self) -> None:
+        """
+        DDL idempotente: añade columnas de lineaje de datos a fact_kpi_staging y H.
+
+        Columnas añadidas:
+          fact_kpi_staging.ai_extracted_value   — snapshot inmutable del valor de Gemini
+          H.ai_extracted_value                  — ídem, copiado al promover a facts
+          H.manual_correction_value             — valor corregido por el analista (o NULL)
+
+        Se llama una vez en startup. Si las columnas ya existen, es un no-op.
+        Si BQ no es accesible, loga un warning sin bloquear el arranque.
+        """
+        statements = [
+            (
+                "fact_kpi_staging.ai_extracted_value",
+                f"""ALTER TABLE `{_DATASET}.fact_kpi_staging`
+                    ADD COLUMN IF NOT EXISTS ai_extracted_value FLOAT64
+                    OPTIONS(description="Valor original extraído por Gemini — inmutable")""",
+            ),
+            (
+                "H.ai_extracted_value",
+                f"""ALTER TABLE `{_DATASET}.H`
+                    ADD COLUMN IF NOT EXISTS ai_extracted_value FLOAT64
+                    OPTIONS(description="Valor original extraído por Gemini — inmutable")""",
+            ),
+            (
+                "H.manual_correction_value",
+                f"""ALTER TABLE `{_DATASET}.H`
+                    ADD COLUMN IF NOT EXISTS manual_correction_value FLOAT64
+                    OPTIONS(description="Valor corregido manualmente por el analista")""",
+            ),
+        ]
+        for label, ddl in statements:
+            try:
+                _client().query(ddl).result()
+                log.info("migrate_lineage_columns: columna %s verificada/creada", label)
+            except Exception as exc:
+                log.warning("migrate_lineage_columns: %s no se pudo crear (%s) — continuando", label, exc)
+
+    def create_dim_users_table(self) -> None:
+        """
+        DDL: CREATE TABLE IF NOT EXISTS dim_users.
+
+        Se llama una vez en el evento startup de FastAPI.  Si la tabla ya existe,
+        es un no-op.  Si BQ no es accesible en este momento, loga un warning y
+        devuelve sin levantar excepción para no bloquear el arranque.
+        """
+        ddl = f"""
+        CREATE TABLE IF NOT EXISTS `{_DATASET}.dim_users` (
+            user_id       STRING     NOT NULL
+                OPTIONS(description="ID Híbrido ANA-XXXXXX o FND-XXXXXX"),
+            email         STRING     NOT NULL
+                OPTIONS(description="Email del usuario — clave de negocio única"),
+            password_hash STRING     NOT NULL
+                OPTIONS(description="Hash bcrypt $2b$12$... o 'PENDING' para invitaciones"),
+            name          STRING
+                OPTIONS(description="Nombre de display del usuario"),
+            role          STRING     NOT NULL
+                OPTIONS(description="ANALISTA | FOUNDER | SOCIO"),
+            company_id    STRING
+                OPTIONS(description="FK lógica a dim_company.company_id"),
+            company_slug  STRING
+                OPTIONS(description="Slug canónico de la empresa (ej. quinio)"),
+            company_name  STRING
+                OPTIONS(description="Nombre de display de la empresa (ej. Quinio)"),
+            status        STRING     NOT NULL
+                OPTIONS(description="ACTIVE | PENDING_INVITE"),
+            auth_provider STRING
+                OPTIONS(description="password | google"),
+            created_at    TIMESTAMP
+                OPTIONS(description="Fecha de creación del registro"),
+            updated_at    TIMESTAMP
+                OPTIONS(description="Última modificación")
+        )
+        OPTIONS (description = 'Usuarios del sistema Cometa Pipeline')
+        """
+        try:
+            _client().query(ddl).result()
+            log.info("dim_users: tabla verificada/creada en %s", _DATASET)
+        except Exception as exc:
+            log.warning("dim_users: no se pudo crear la tabla (%s) — continuando", exc)
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        """
+        Retorna el usuario con ese email desde dim_users, o None si no existe.
+
+        Mapea los campos de BQ al formato UserSchema-compatible (id, password).
+        """
+        sql = f"""
+            SELECT {', '.join(self._USER_COLS)}
+            FROM `{_DATASET}.dim_users`
+            WHERE LOWER(email) = LOWER(@email)
+            LIMIT 1
+        """
+        try:
+            rows = list(_client().query(
+                sql,
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("email", "STRING", email.strip().lower()),
+                ]),
+            ).result())
+            return self._row_to_user(rows[0]) if rows else None
+        except GoogleAPIError as exc:
+            raise BQInsertError(f"Error al buscar usuario por email: {exc}") from exc
+
+    def list_all_users(self) -> list[dict[str, Any]]:
+        """
+        Retorna todos los usuarios de dim_users en formato UserSchema-compatible.
+
+        Lanza BQInsertError si BQ no es accesible — el llamador debe manejar el fallback.
+        """
+        sql = f"""
+            SELECT {', '.join(self._USER_COLS)}
+            FROM `{_DATASET}.dim_users`
+            ORDER BY email
+        """
+        try:
+            rows = list(_client().query(sql).result())
+            return [self._row_to_user(r) for r in rows]
+        except GoogleAPIError as exc:
+            raise BQInsertError(f"Error al listar usuarios: {exc}") from exc
+
+    def upsert_user(self, user: dict[str, Any]) -> None:
+        """
+        MERGE de un usuario en dim_users usando email como clave.
+
+        Acepta el formato de UserSchema (id, password) y también el formato
+        de BQ (user_id, password_hash) — normaliza automáticamente.
+
+        Garantía: valida que los campos críticos estén presentes antes de
+        ejecutar el DML. Nunca escribe un usuario sin user_id válido.
+        """
+        # Normalizar campo names: UserSchema → BQ
+        u_id  = user.get("user_id") or user.get("id", "")
+        u_pwd = user.get("password_hash") or user.get("password", "")
+        email = (user.get("email") or "").strip().lower()
+
+        if not u_id or not email:
+            raise ValueError(f"upsert_user: user_id y email son obligatorios (got id={u_id!r} email={email!r})")
+
+        merge_sql = f"""
+        MERGE `{_DATASET}.dim_users` AS target
+        USING (
+            SELECT
+                @user_id       AS user_id,
+                @email         AS email,
+                @password_hash AS password_hash,
+                @name          AS name,
+                @role          AS role,
+                @company_id    AS company_id,
+                @company_slug  AS company_slug,
+                @company_name  AS company_name,
+                @status        AS status,
+                @auth_provider AS auth_provider
+        ) AS source
+        ON LOWER(target.email) = LOWER(source.email)
+        WHEN MATCHED THEN UPDATE SET
+            user_id       = source.user_id,
+            password_hash = source.password_hash,
+            name          = source.name,
+            role          = source.role,
+            company_id    = source.company_id,
+            company_slug  = source.company_slug,
+            company_name  = source.company_name,
+            status        = source.status,
+            auth_provider = source.auth_provider,
+            updated_at    = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN INSERT
+            (user_id, email, password_hash, name, role,
+             company_id, company_slug, company_name,
+             status, auth_provider, created_at, updated_at)
+        VALUES
+            (source.user_id, source.email, source.password_hash,
+             source.name, source.role, source.company_id,
+             source.company_slug, source.company_name,
+             source.status, source.auth_provider,
+             CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+        """
+        params = [
+            bigquery.ScalarQueryParameter("user_id",       "STRING", u_id),
+            bigquery.ScalarQueryParameter("email",         "STRING", email),
+            bigquery.ScalarQueryParameter("password_hash", "STRING", u_pwd),
+            bigquery.ScalarQueryParameter("name",          "STRING", user.get("name", "") or ""),
+            bigquery.ScalarQueryParameter("role",          "STRING", user.get("role", "FOUNDER")),
+            bigquery.ScalarQueryParameter("company_id",    "STRING", user.get("company_id", "") or ""),
+            bigquery.ScalarQueryParameter("company_slug",  "STRING", user.get("company_slug", "") or ""),
+            bigquery.ScalarQueryParameter("company_name",  "STRING", user.get("company_name", "") or ""),
+            bigquery.ScalarQueryParameter("status",        "STRING", user.get("status", "ACTIVE")),
+            bigquery.ScalarQueryParameter("auth_provider", "STRING", user.get("auth_provider", "password")),
+        ]
+        try:
+            _client().query(
+                merge_sql,
+                job_config=bigquery.QueryJobConfig(query_parameters=params),
+            ).result()
+        except GoogleAPIError as exc:
+            raise BQInsertError(f"Error al hacer upsert del usuario {email!r}: {exc}") from exc
+
+        # Invalidar caché de contexto para este usuario — los datos acaban de cambiar
+        self._user_ctx_cache.pop(email, None)
+
+    def get_user_auth_context(self, email: str) -> dict[str, str]:
+        """
+        Retorna la identidad completa de empresa para un usuario.
+
+        Hace JOIN entre dim_users y dim_company para obtener los campos canónicos
+        company_id, company_slug, company_name. Si el usuario tiene esos campos
+        explícitos en dim_users, tienen prioridad sobre dim_company.
+
+        Caché TTL (_USER_CTX_TTL = 300 s): el resultado se almacena en memoria
+        para evitar un hit BQ en cada request de navegación. Se invalida
+        automáticamente cuando upsert_user() modifica el registro del usuario.
+
+        Args:
+            email: Email del usuario (se normaliza a minúscula).
+
+        Returns:
+            { "company_id": str, "company_slug": str, "company_name": str }
+            Todos los campos son cadenas vacías si el usuario no existe o no
+            tiene empresa asignada.
+
+        Raises:
+            BQInsertError: Si BQ no es accesible — el llamador debe manejar fallback.
+        """
+        key = email.strip().lower()
+        now = time.monotonic()
+
+        # ── Servir desde caché si no ha expirado ──────────────────────────────
+        cached = self._user_ctx_cache.get(key)
+        if cached and now < cached[1]:
+            return cached[0]
+
+        # ── BQ query ──────────────────────────────────────────────────────────
+        sql = f"""
+            SELECT
+                COALESCE(u.company_id,   c.company_id,   '')    AS company_id,
+                COALESCE(u.company_slug, u.company_id,   '')    AS company_slug,
+                COALESCE(u.company_name, c.company_name, '')    AS company_name
+            FROM `{_DATASET}.dim_users` u
+            LEFT JOIN `{_DATASET}.dim_company` c
+                ON LOWER(u.company_id) = LOWER(c.company_id)
+            WHERE LOWER(u.email) = LOWER(@email)
+            LIMIT 1
+        """
+        try:
+            rows = list(_client().query(
+                sql,
+                job_config=bigquery.QueryJobConfig(query_parameters=[
+                    bigquery.ScalarQueryParameter("email", "STRING", key),
+                ]),
+            ).result())
+            result: dict[str, str] = (
+                {
+                    "company_id":   dict(rows[0]).get("company_id", "") or "",
+                    "company_slug": dict(rows[0]).get("company_slug", "") or "",
+                    "company_name": dict(rows[0]).get("company_name", "") or "",
+                }
+                if rows else
+                {"company_id": "", "company_slug": "", "company_name": ""}
+            )
+        except GoogleAPIError as exc:
+            raise BQInsertError(f"Error en get_user_auth_context para {email!r}: {exc}") from exc
+
+        # ── Guardar en caché con TTL ───────────────────────────────────────────
+        self._user_ctx_cache[key] = (result, now + self._USER_CTX_TTL)
+        return result

@@ -262,6 +262,7 @@ class BucketFile(BaseModel):
     """Un archivo en uno de los buckets del medallion pipeline."""
     uri:           str
     name:          str
+    display_name:  str  = ""   # Nombre original del archivo (sin prefijo hash/load_id)
     layer:         Literal["raw", "stage", "vault", "gold", "historicofund", "pending"]
     company_slug:  str  = ""
     size_bytes:    int  = 0

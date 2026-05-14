@@ -1994,6 +1994,7 @@ async def process_document(
                     submitted_by=submitted_by,
                     source_file=source_file,
                     staging_rows=staging_rows,
+                    display_name=filename,
                 )
                 _staging_ok = True
             except _CompanyNotFoundError2 as exc:
@@ -2121,6 +2122,7 @@ async def process_document(
             source_file=source_file,
             kpi_rows=kpi_rows,
             raw_file_path=_raw_file_path or None,
+            display_name=filename,
         )
     except _BQInsertError as exc:
         _log.error("[process-document] BQ insert fallido: %s", exc)

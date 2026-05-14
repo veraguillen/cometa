@@ -176,6 +176,7 @@ export type FinalizeAnalysisResponse = z.infer<typeof finalizeAnalysisResponseSc
 export const bucketFileSchema = z.object({
   uri:           z.string(),
   name:          z.string(),
+  display_name:  z.string().default(""),
   layer:         z.enum(["raw", "stage", "vault", "gold", "historicofund", "pending"]),
   company_slug:  z.string().default(""),
   size_bytes:    z.number().default(0),
@@ -196,6 +197,60 @@ export const bucketListResponseSchema = z.object({
 });
 
 export type BucketListResponse = z.infer<typeof bucketListResponseSchema>;
+
+// ── Submissions — Vista de comparación Analista ────────────────────────────
+// Espeja: SubmissionListItem + SubmissionDetail + SubmissionListResponse en analyst.py
+
+export const submissionKpiRowSchema = z.object({
+  metric_id:               z.string(),
+  value:                   z.number().nullable().optional(),
+  period_id:               z.string().default(""),
+  period_start:            z.string().default(""),
+  notes:                   z.string().default(""),
+  metric_name:             z.string().default(""),   // nombre legible desde dim_metric
+  unit:                    z.string().default(""),
+  vertical:                z.string().default(""),
+  // Lineaje de datos: snapshot de Gemini vs corrección humana
+  ai_extracted_value:      z.number().nullable().optional(),
+  manual_correction_value: z.number().nullable().optional(),
+});
+
+export const submissionListItemSchema = z.object({
+  submission_id: z.string(),
+  company_id:    z.string(),
+  status:        z.string(),
+  created_at:    z.string(),
+  display_name:  z.string().default(""),   // nombre real del archivo (vacío en registros antiguos)
+  source_file:   z.string().default(""),
+});
+
+export const submissionDetailSchema = submissionListItemSchema.extend({
+  download_url:        z.string().nullable().optional(),  // Signed URL GCS (1 h)
+  download_expires_in: z.number().default(0),
+  kpi_count:           z.number().default(0),
+  kpis:                z.array(submissionKpiRowSchema).default([]),
+});
+
+export const submissionListResponseSchema = z.object({
+  submissions: z.array(submissionListItemSchema),
+  total:       z.number().default(0),
+});
+
+export type SubmissionKpiRow       = z.infer<typeof submissionKpiRowSchema>;
+export type SubmissionListItem     = z.infer<typeof submissionListItemSchema>;
+export type SubmissionDetail       = z.infer<typeof submissionDetailSchema>;
+export type SubmissionListResponse = z.infer<typeof submissionListResponseSchema>;
+
+// ── PATCH /api/analyst/submissions/{id}/kpis ──────────────────────────────────
+// Espeja: PatchKpisResponse en analyst.py
+
+export const patchKpisResponseSchema = z.object({
+  submission_id:       z.string(),
+  corrections_applied: z.number(),
+  status:              z.string(),
+});
+
+export type PatchKpisResponse = z.infer<typeof patchKpisResponseSchema>;
 
 // ── ChecklistStatus — sector KPI validation from POST /upload ─────────────────
 // Espeja: build_checklist_status() en src/core/data_contract.py

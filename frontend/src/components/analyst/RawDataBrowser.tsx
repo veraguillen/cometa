@@ -139,7 +139,7 @@ function FileDetailPanel({
       {/* Header */}
       <div className="space-y-1">
         <h3 className="text-[13px] font-medium break-all" style={{ color: "#e2e8f0" }}>
-          {file.name.split("/").pop()}
+          {file.display_name || file.name.split("/").pop()}
         </h3>
         <p className="text-[10px] font-mono break-all" style={{ color: "#334155" }}>
           gs://{file.uri.replace("gs://", "")}
@@ -602,7 +602,7 @@ export default function RawDataBrowser({ analystId = "ANA-000000", onApprove }: 
           ) : (
             files.map((file) => {
               const isSelected = selectedFile?.uri === file.uri;
-              const fname      = file.name.split("/").pop() ?? file.name;
+              const fname      = file.display_name || file.name.split("/").pop() || file.name;
               return (
                 <button
                   key={file.uri}
@@ -715,7 +715,7 @@ export default function RawDataBrowser({ analystId = "ANA-000000", onApprove }: 
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <p className="text-[12px] font-medium" style={{ color: "#e2e8f0" }}>
-                              {selectedFile.name.split("/").pop()}
+                              {selectedFile.display_name || selectedFile.name.split("/").pop()}
                             </p>
                             <p className="text-[10px] mt-0.5" style={{ color: "#475569" }}>
                               {inlineReview.slug} · {inlineReview.periodo || "período no detectado"}

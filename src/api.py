@@ -256,10 +256,11 @@ async def request_validation_handler(
 
 @app.on_event("startup")
 async def _startup():
-    """Bootstrap BigQuery analytics schema once at server start.
-
-    Verifica conectividad con el dataset configurado en BIGQUERY_DATASET.
-    Si la conexión falla el servidor se detiene con un error claro.
+    """
+    Bootstrap del servidor:
+      1. Verifica conectividad BQ con get_portfolio_catalog().
+      2. Crea dim_users si no existe (DDL idempotente).
+      3. Migra users.json → dim_users si dim_users está vacía.
     """
     import asyncio
     import sys
@@ -269,26 +270,53 @@ async def _startup():
     print(f"🚀 Conectado a Producción: Proyecto {_bq_project} - Dataset {_BQ_DATASET}")
 
     try:
-        # Startup health-check: verificar conectividad BQ con get_portfolio_catalog()
-        # (TTL 5 min, non-blocking). En v2.0 ya no hay DDL propio — el schema lo
-        # gestiona el equipo de data; nosotros solo insertamos filas.
         await asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(None, _bq_svc.get_portfolio_catalog),
             timeout=30.0,
         )
-        print("✅ [Startup] Servidor listo para recibir archivos en :8000")
     except asyncio.TimeoutError:
-        msg = (
-            f"❌ [Startup] TIMEOUT (30 s) al conectar con {_bq_project}.{_bq_dataset}.\n"
+        print(
+            f"❌ [Startup] TIMEOUT (30 s) al conectar con {_bq_project}.{_BQ_DATASET}.\n"
             f"   Verifica conectividad y permisos IAM. El servidor se detiene."
         )
-        print(msg)
         sys.exit(1)
     except Exception as exc:
-        print(
-            f"❌ [Startup] Fallo crítico de BigQuery — el servidor se detiene.\n{exc}"
-        )
+        print(f"❌ [Startup] Fallo crítico de BigQuery — el servidor se detiene.\n{exc}")
         sys.exit(1)
+
+    # ── DDL migrations (idempotentes) ──────────────────────────────────────────
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _bq_svc.migrate_lineage_columns)
+    except Exception as exc:
+        print(f"⚠️  [Startup] migrate_lineage_columns falló (no es bloqueante): {exc}")
+
+    # ── dim_users: crear tabla + migrar desde users.json si está vacía ─────────
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _bq_svc.create_dim_users_table)
+
+        # Migración one-shot: si dim_users está vacía y users.json tiene datos,
+        # copiar todos los usuarios para que el servidor funcione inmediatamente.
+        existing = await loop.run_in_executor(None, _bq_svc.list_all_users)
+        if not existing and _USERS_FILE.exists():
+            try:
+                raw_users = json.loads(_USERS_FILE.read_text(encoding="utf-8")).get("users", [])
+                migrated = 0
+                for u in raw_users:
+                    try:
+                        _bq_svc.upsert_user(u)
+                        migrated += 1
+                    except Exception as ue:
+                        print(f"⚠️  [Startup] No se pudo migrar usuario {u.get('email')}: {ue}")
+                if migrated:
+                    print(f"✅ [Startup] {migrated} usuario(s) migrados de users.json → dim_users")
+            except Exception as me:
+                print(f"⚠️  [Startup] Migración users.json → dim_users falló: {me}")
+    except Exception as exc:
+        print(f"⚠️  [Startup] dim_users bootstrap falló (no es bloqueante): {exc}")
+
+    print("✅ [Startup] Servidor listo para recibir archivos en :8000")
 
 # ── CORS — orígenes permitidos desde variable de entorno ─────────────────────
 # ALLOWED_ORIGINS acepta una lista separada por comas.
@@ -4913,6 +4941,29 @@ _DEMO_IDENTITY: dict[str, str] = {
 }
 
 
+def _get_company_context(email: str) -> dict[str, str]:
+    """
+    Fuente única de verdad para la identidad de empresa de un usuario.
+
+    Orden de resolución:
+      1. BQ: JOIN dim_users + dim_company — datos en tiempo real, incluye campos
+         explícitos asignados durante la invitación (company_slug, company_name).
+      2. Fallback local: _resolve_company_identity(email) — mapeo estático de
+         dominio a slug, usado en dev local sin BQ o cuando dim_users está vacía.
+
+    Los callers (login, setup_password) no deben llamar _resolve_company_identity
+    directamente — usar esta función para garantizar que siempre se prioriza BQ.
+    """
+    try:
+        ctx = _bq_svc.get_user_auth_context(email)
+        # BQ devolvió datos útiles — usar si hay al menos company_slug
+        if ctx.get("company_slug") or ctx.get("company_id"):
+            return ctx
+    except Exception as exc:
+        log.warning("[_get_company_context] BQ no disponible (%s) — fallback local", exc)
+    return _resolve_company_identity(email)
+
+
 def _resolve_company_identity(email: str) -> dict[str, str]:
     """
     Mapea el email del Founder a ``{company_slug, company_name}`` de forma
@@ -4987,7 +5038,24 @@ def _verify_password(plaintext: str, stored: str) -> bool:
 
 
 def _load_users() -> list[dict]:
-    """Lee users.json desde disco. No cachea para reflejar cambios en caliente."""
+    """
+    Lee usuarios desde BigQuery (dim_users).
+
+    Fallback en dos capas:
+      1. BQ no disponible → lee users.json local (bootstrap / dev sin BQ).
+      2. users.json no existe → lista vacía.
+
+    Nota: los registros devueltos tienen formato UserSchema-compatible
+    (campos 'id' y 'password', no 'user_id'/'password_hash').
+    """
+    try:
+        users = _bq_svc.list_all_users()
+        if users:
+            return users
+        # BQ respondió pero está vacío — migrar desde JSON si existe
+        raise _BQCatalogError("dim_users vacía")
+    except Exception as _bq_exc:
+        log.warning("[_load_users] BQ no disponible o dim_users vacía (%s) — fallback a users.json", _bq_exc)
     try:
         with open(_USERS_FILE, "r", encoding="utf-8") as fh:
             return json.load(fh).get("users", [])
@@ -4997,17 +5065,29 @@ def _load_users() -> list[dict]:
 
 def _save_users(users: list[UserSchema]) -> None:
     """
-    Persiste usuarios validados en users.json (escritura atómica vía .tmp).
+    Persiste usuarios validados en BigQuery (dim_users) via MERGE atómico.
 
-    La firma `list[UserSchema]` es la barrera de seguridad principal:
-    es imposible llamar esta función con datos sin validar, ya que
-    UserSchema aplica todas sus validaciones en el momento de construcción.
+    La firma `list[UserSchema]` sigue siendo la barrera de seguridad principal:
+    es imposible llamar esta función con datos sin validar — UserSchema aplica
+    todas sus validaciones en el momento de construcción (antes de llegar aquí).
 
     Flujo garantizado:
       1. Caller construye list[UserSchema]  ← validación ocurre AQUÍ
-      2. Si falla → ValidationError antes de abrir ningún archivo
-      3. Si pasa → serialización + write atómico (.tmp → replace)
+      2. Si falla → ValidationError antes de tocar ningún storage
+      3. Si pasa → upsert_user() por MERGE en BQ + backup atómico en users.json
+
+    Backup local: users.json se mantiene actualizado como bootstrap para entornos
+    sin BQ (desarrollo local sin credenciales GCP) y como snapshot de auditoría.
     """
+    for u in users:
+        try:
+            _bq_svc.upsert_user(u.model_dump())
+        except Exception as exc:
+            log.error("[_save_users] No se pudo persistir %s en BQ: %s", u.email, exc)
+            # Re-lanza para que el handler global 422 no silencia errores críticos de escritura
+            raise
+
+    # Backup atómico en disco (.tmp → replace) — sin este paso dev local queda sin datos
     tmp = _USERS_FILE.with_suffix(".json.tmp")
     payload = [u.model_dump() for u in users]
     tmp.write_text(json.dumps({"users": payload}, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -5082,12 +5162,11 @@ async def login(request: Request, body: LoginRequest):
     name    = user.get("name", "")
 
     # ── Resolución de identidad de empresa — inyectada en JWT ─────────────────
-    # Para FOUNDERs, la identidad viene del dominio del email (no del body).
-    # Analistas internos reciben sus propios campos para compatibilidad.
-    # Si users.json tiene company_slug / company_name explícitos, tienen prioridad
-    # sobre el resolver client-side (útil cuando el email de prueba no coincide
-    # con el dominio real de la empresa, ej. founder@demo.com → Quinio).
-    company_identity = _resolve_company_identity(email_lc)
+    # _get_company_context() hace JOIN dim_users + dim_company en BQ (fuente 1)
+    # y cae al resolver de dominio estático si BQ no está disponible (fuente 2).
+    # Los campos en users.json/dim_users tienen prioridad sobre el resolver —
+    # útil cuando el email no coincide con el dominio real (ej. founder@demo.com).
+    company_identity = _get_company_context(email_lc)
     company_slug = user.get("company_slug") or company_identity["company_slug"]
     company_name = user.get("company_name") or company_identity["company_name"]
 
@@ -5131,9 +5210,9 @@ async def get_me(token: dict = Depends(_require_auth)):
         _check_cometa_domain(token)
 
     email = token.get("email") or token.get("sub", "")
-    # Tokens legacy sin company_slug: resolver en caliente (backwards-compat)
+    # Tokens legacy sin company_slug: resolver desde BQ (con fallback a dominio estático)
     if not token.get("company_slug"):
-        identity = _resolve_company_identity(email)
+        identity = _get_company_context(email)
     else:
         identity = {
             "company_slug": token["company_slug"],
@@ -5240,13 +5319,23 @@ async def setup_password(
     _save_users(validated)
 
     # ── 6. Issue access token ──────────────────────────────────────────────────
+    # Incluye los mismos claims de empresa que /api/login para que el frontend
+    # no necesite un segundo request a /api/me al activar la cuenta (Gap G2).
     activated = users[idx]
     role      = enforce_internal_role(invite_email, activated.get("role", "FOUNDER"))
+    company_ctx = _get_company_context(invite_email)
+    company_slug = activated.get("company_slug") or company_ctx["company_slug"]
+    company_name = activated.get("company_name") or company_ctx["company_name"]
     token     = create_access_token(
         email=invite_email,
         role=role,
         name=activated.get("name", ""),
         user_id=activated.get("id", ""),
+        extra_claims={
+            "company_slug": company_slug,
+            "company_name": company_name,
+            "company_id":   activated.get("company_id", company_slug),
+        },
     )
     print(f"[setup-password] Account activated: {invite_email}")
 
@@ -5255,11 +5344,13 @@ async def setup_password(
             "access_token": token,
             "token_type":   "bearer",
             "user": {
-                "user_id":    activated.get("id", ""),
-                "email":      invite_email,
-                "name":       activated.get("name", ""),
-                "role":       role,
-                "company_id": activated.get("company_id", ""),
+                "user_id":      activated.get("id", ""),
+                "email":        invite_email,
+                "name":         activated.get("name", ""),
+                "role":         role,
+                "company_id":   activated.get("company_id", company_slug),
+                "company_slug": company_slug,
+                "company_name": company_name,
             },
         },
         status_code=200,
@@ -6098,12 +6189,18 @@ async def list_analyst_buckets(
     # GOLD_BUCKET  — KPIs certificados por el analista
     # HIST_BUCKET  — CSV maestro del fondo (solo lectura)
 
+    # Prefijos reales según el path que construye cada flujo de upload:
+    #   raw    → process_document sube a {company_id}/{year}/RAW..._{file}  (sin raw/)
+    #   stage  → upload_stage_layer crea stage/{slug}/{Y}/{M}/{load_id}_gemini.json
+    #   vault  → igual que stage pero bajo vault/
+    #   gold   → upload_gold_layer crea gold/{slug}/{Y}/{M}/{load_id}_contract.json
+    #   pending→ pending_mapper/{slug}/{uuid32}_{file}
     layer_cfg: dict[str, tuple[str, str]] = {
-        "raw":          (RAW_BUCKET,   ""),            # Origen: PDFs/XLSX originales
-        "stage":        (STAGE_BUCKET, "stage/"),      # Extracción: JSONs de Gemini
-        "vault":        (STAGE_BUCKET, "vault/"),      # Vault: resultados procesados
-        "gold":         (GOLD_BUCKET,  ""),            # Certificado: KPIs aprobados
-        "historicofund":(HIST_BUCKET,  ""),            # Histórico: CSV maestro fondo
+        "raw":          (RAW_BUCKET,   ""),              # Origen: {company_id}/{year}/RAW...
+        "stage":        (STAGE_BUCKET, "stage/"),        # Extracción: JSONs de Gemini
+        "vault":        (STAGE_BUCKET, "vault/"),        # Vault: resultados procesados
+        "gold":         (GOLD_BUCKET,  "gold/"),         # Certificado: KPIs aprobados
+        "historicofund":(HIST_BUCKET,  ""),              # Histórico: CSV maestro fondo
         "pending":      (STAGE_BUCKET, "pending_mapper/"),  # Excel/CSV en cola
     }
     bucket_name, prefix = layer_cfg[layer]
@@ -6170,9 +6267,26 @@ async def list_analyst_buckets(
 
         updated_str = blob.updated.isoformat() if blob.updated else ""
 
+        # ── display_name: nombre legible sin prefijo hash/timestamp ─────────────
+        # raw (nuevo) : {company_id}/{year}/RAW{18digits}_{original_name}
+        # raw (viejo) : raw/{slug}/{Y}/{M}/{hash16}_{original_name}
+        # pending     : pending_mapper/{slug}/{uuid32}_{original_name}
+        # stage/gold/vault: nombres generados → sin cambio
+        if layer == "raw":
+            # Nuevo formato: RAW + 18 dígitos + _
+            display_name = _re.sub(r"^RAW\d{18}_", "", fname)
+            # Fallback: formato viejo con hash hexadecimal de 16 chars
+            if display_name == fname:
+                display_name = _re.sub(r"^[a-f0-9]{16}_", "", fname)
+        elif layer == "pending":
+            display_name = fname[33:] if len(fname) > 33 else fname  # 32 hex + '_'
+        else:
+            display_name = fname
+
         files.append({
             "uri":           f"gs://{bucket_name}/{blob.name}",
             "name":          blob.name,
+            "display_name":  display_name,
             "layer":         layer,
             "company_slug":  slug,
             "size_bytes":    blob.size or 0,

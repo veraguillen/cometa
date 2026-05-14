@@ -2,9 +2,12 @@
 src/routers/analyst.py — Router de Analista (validación Human-in-the-Loop).
 
 Rutas incluidas:
-  GET  /api/analyst/staging/pending        — cola de KPIs pendientes de revisión
-  POST /api/analyst/staging/validate       — aprobar o rechazar un batch de staging
-  GET  /api/analyst/staging/{staging_id}   — detalle de un batch específico
+  GET   /api/analyst/staging/pending            — cola de KPIs pendientes de revisión
+  POST  /api/analyst/staging/validate           — aprobar o rechazar un batch de staging
+  GET   /api/analyst/staging/{staging_id}       — detalle de un batch específico
+  GET   /api/analyst/submissions                — lista de submissions con display_name
+  GET   /api/analyst/submissions/{id}           — detalle: metadatos + KPIs + URL de descarga
+  PATCH /api/analyst/submissions/{id}/kpis      — corregir KPIs y/o aprobar submission
 
 Regla de acceso:
   Todos los endpoints requieren JWT con role='ANALISTA' (prefijo ANA-).
@@ -107,8 +110,23 @@ async def get_pending_staging(
         pass
 
     def _extract_filename(gcs_path: str) -> str:
-        """Returns the last path component of a GCS URI."""
-        return gcs_path.rstrip("/").split("/")[-1] if gcs_path else ""
+        """
+        Extrae el nombre legible del archivo desde su URI de GCS eliminando prefijos
+        de sistema. Maneja los dos formatos activos:
+
+        Nuevo (process-document): gs://bucket/{company_id}/{year}/RAW{18d}_{name}
+        Viejo (medallion legacy):  gs://bucket/raw/{slug}/{Y}/{M}/{hash16}_{name}
+        """
+        if not gcs_path:
+            return ""
+        import re as _re
+        raw = gcs_path.rstrip("/").split("/")[-1]
+        # Nuevo formato: RAW + 18 dígitos + _
+        cleaned = _re.sub(r"^RAW\d{18}_", "", raw)
+        # Fallback: hash hexadecimal de 16 chars (uploads medallion legacy)
+        if cleaned == raw:
+            cleaned = _re.sub(r"^[a-f0-9]{16}_", "", raw)
+        return cleaned
 
     def _detect_mismatch(gcs_path: str, staging_company_id: str) -> bool:
         """
@@ -132,6 +150,9 @@ async def get_pending_staging(
         if sid not in batches:
             gcs_path     = row.get("source_file") or ""
             company_id_  = row["company_id"]
+            # Usar display_name de BQ si está disponible; si no, derivar desde la URI
+            bq_display   = (row.get("display_name") or "").strip()
+            filename_val = bq_display if bq_display else _extract_filename(gcs_path)
             batches[sid] = {
                 "staging_id":        sid,
                 "company_id":        company_id_,
@@ -141,7 +162,7 @@ async def get_pending_staging(
                 "physics_ok":        row.get("physics_ok", True),
                 "physics_notes":     row.get("physics_notes"),
                 "source_file":       gcs_path or None,
-                "filename":          _extract_filename(gcs_path),
+                "filename":          filename_val,
                 "company_mismatch":  _detect_mismatch(gcs_path, company_id_),
                 "kpi_count":         0,
                 "rows":              [],
@@ -339,3 +360,255 @@ async def get_staging_detail(
             for r in batch_rows
         ],
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUBMISSIONS — Vista de comparación Archivo Original ↔ KPIs Extraídos
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── Schemas ───────────────────────────────────────────────────────────────────
+
+class SubmissionKpiRow(BaseModel):
+    metric_id:               str
+    value:                   Optional[float] = None
+    period_id:               str             = ""
+    period_start:            str             = ""
+    notes:                   str             = ""
+    metric_name:             str             = ""   # nombre legible desde dim_metric
+    unit:                    str             = ""
+    vertical:                str             = ""
+    ai_extracted_value:      Optional[float] = None  # snapshot de Gemini — inmutable
+    manual_correction_value: Optional[float] = None  # corrección del analista (o None)
+
+
+class KpiCorrection(BaseModel):
+    metric_id:    str   = Field(..., description="ID canónico de la métrica")
+    period_id:    str   = Field(..., description="ej. P2025Q1M04")
+    period_start: str   = Field(..., description="YYYY-MM-DD — filtro de partición BQ")
+    value:        float = Field(..., description="Valor corregido por el analista")
+
+
+class PatchKpisRequest(BaseModel):
+    corrections: list[KpiCorrection] = Field(
+        ..., description="Lista de métricas corregidas. Solo las que cambiaron."
+    )
+    approve: bool = Field(
+        True,
+        description="Si True (default), marca la submission como VALIDATED tras aplicar correcciones.",
+    )
+
+    model_config = {"str_strip_whitespace": True}
+
+
+class PatchKpisResponse(BaseModel):
+    submission_id:       str
+    corrections_applied: int
+    status:              str
+
+
+class SubmissionListItem(BaseModel):
+    submission_id: str
+    company_id:    str
+    status:        str
+    created_at:    str
+    display_name:  str = ""   # nombre legible del archivo; vacío en registros antiguos
+    source_file:   str = ""
+
+
+class SubmissionDetail(SubmissionListItem):
+    """Detalle completo: metadatos + URL de descarga segura + KPIs extraídos."""
+    download_url:        Optional[str] = None   # Signed URL GCS (1 hora)
+    download_expires_in: int           = 0      # segundos hasta expiración
+    kpi_count:           int           = 0
+    kpis:                list[SubmissionKpiRow] = []
+
+
+class SubmissionListResponse(BaseModel):
+    submissions: list[SubmissionListItem]
+    total:       int = 0
+
+
+# ── Helper: generar Signed URL desde una URI gs:// ────────────────────────────
+
+def _signed_url_from_gcs_uri(gcs_uri: str, expiration_hours: int = 1) -> tuple[str, int]:
+    """
+    Genera una Signed URL (GET, v4) para un objeto GCS.
+
+    Args:
+        gcs_uri:          URI completa gs://bucket/path/to/object.
+        expiration_hours: Tiempo de vida en horas (default 1).
+
+    Returns:
+        (signed_url, expires_in_seconds) o ("", 0) si gcs_uri no es gs://.
+
+    Non-fatal: cualquier error de firma devuelve ("", 0).
+    """
+    if not gcs_uri.startswith("gs://"):
+        return ("", 0)
+
+    path_no_scheme = gcs_uri[5:]
+    slash_pos = path_no_scheme.find("/")
+    if slash_pos == -1:
+        return ("", 0)
+
+    bucket_name = path_no_scheme[:slash_pos]
+    blob_path   = path_no_scheme[slash_pos + 1:]
+
+    try:
+        sa_json = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
+        if sa_json:
+            import json as _json
+            from google.oauth2 import service_account as _sa
+            sa_info = _json.loads(sa_json)
+            if isinstance(sa_info, str):
+                sa_info = _json.loads(sa_info)
+            creds  = _sa.Credentials.from_service_account_info(sa_info)
+            client = _gcs_storage.Client(credentials=creds)
+        else:
+            client = _gcs_storage.Client()
+
+        blob       = client.bucket(bucket_name).blob(blob_path)
+        signed_url = blob.generate_signed_url(
+            version    = "v4",
+            expiration = timedelta(hours=expiration_hours),
+            method     = "GET",
+        )
+        return (signed_url, expiration_hours * 3600)
+    except Exception:
+        return ("", 0)
+
+
+# ── GET /api/analyst/submissions ──────────────────────────────────────────────
+
+@router.get("/submissions", response_model=SubmissionListResponse)
+async def list_analyst_submissions(
+    company_id: Optional[str] = None,
+    status:     Optional[str] = None,
+    limit:      int           = 50,
+    token:      dict          = Depends(require_analista),
+) -> SubmissionListResponse:
+    """
+    Lista submissions recientes visibles para el analista.
+
+    Cada ítem incluye el `display_name` (nombre real del archivo) cuando está
+    disponible, para que la cola sea legible sin hashes ni rutas GCS.
+
+    Query params:
+        company_id: filtrar por empresa (opcional).
+        status:     PENDING | VALIDATED | REJECTED (opcional).
+        limit:      máximo de resultados (default 50, max 200).
+    """
+    limit = min(max(1, limit), 200)
+    try:
+        rows = _bq.list_submissions(
+            company_id=company_id or None,
+            status=status or None,
+            limit=limit,
+        )
+    except BQInsertError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    items = [SubmissionListItem(**r) for r in rows]
+    return SubmissionListResponse(submissions=items, total=len(items))
+
+
+# ── GET /api/analyst/submissions/{submission_id} ──────────────────────────────
+
+@router.get("/submissions/{submission_id}", response_model=SubmissionDetail)
+async def get_submission_detail(
+    submission_id: str,
+    token:         dict = Depends(require_analista),
+) -> SubmissionDetail:
+    """
+    Detalle completo de una submission para la vista de comparación del analista.
+
+    Retorna en un solo request:
+      • Metadatos del archivo: display_name, source_file, status, empresa, fecha.
+      • download_url: Signed URL (GET, 1 hora) para descargar/visualizar el archivo
+        original desde GCS. Vacío si el archivo no está en GCS (registros legacy).
+      • kpis: lista de métricas extraídas por la IA vinculadas a este submission_id,
+        con valor, metric_id y período.
+
+    Esto permite al analista ver en una sola pantalla el archivo que subió el
+    founder y los KPIs que la IA leyó, para verificar si la extracción fue correcta.
+    """
+    try:
+        data = _bq.get_submission_with_kpis(submission_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except BQInsertError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    # Generar Signed URL para descarga segura del archivo original
+    gcs_uri = data.get("source_file", "")
+    download_url, expires_in = _signed_url_from_gcs_uri(gcs_uri)
+
+    kpis = [
+        SubmissionKpiRow(
+            metric_id               = r.get("metric_id", ""),
+            value                   = r.get("value"),
+            period_id               = r.get("period_id", ""),
+            period_start            = r.get("period_start", ""),
+            notes                   = r.get("notes", ""),
+            metric_name             = r.get("metric_name", r.get("metric_id", "")),
+            unit                    = r.get("unit", ""),
+            vertical                = r.get("vertical", ""),
+            ai_extracted_value      = r.get("ai_extracted_value"),
+            manual_correction_value = r.get("manual_correction_value"),
+        )
+        for r in data.get("kpis", [])
+    ]
+
+    return SubmissionDetail(
+        submission_id        = data["submission_id"],
+        company_id           = data["company_id"],
+        status               = data["status"],
+        created_at           = data.get("created_at", ""),
+        display_name         = data.get("display_name", ""),
+        source_file          = gcs_uri,
+        download_url         = download_url or None,
+        download_expires_in  = expires_in,
+        kpi_count            = data.get("kpi_count", len(kpis)),
+        kpis                 = kpis,
+    )
+
+
+# ── PATCH /api/analyst/submissions/{submission_id}/kpis ───────────────────────
+
+@router.patch("/submissions/{submission_id}/kpis", response_model=PatchKpisResponse)
+async def patch_submission_kpis(
+    submission_id: str,
+    body:          PatchKpisRequest,
+    token:         dict = Depends(require_analista),
+) -> PatchKpisResponse:
+    """
+    Aplica correcciones manuales a los KPIs de una submission y opcionalmente
+    la marca como VALIDATED.
+
+    Body (JSON):
+        corrections: lista de { metric_id, period_id, period_start, value }
+                     — solo los KPIs que cambiaron.
+        approve:     si True (default), la submission pasa a status=VALIDATED
+                     tras aplicar las correcciones.
+
+    El email del analista se extrae del JWT para auditoría.
+    Retorna el número de correcciones aplicadas y el status resultante.
+    """
+    approved_by: str = token.get("email") or token.get("sub", "unknown")
+
+    corrections = [c.model_dump() for c in body.corrections]
+
+    try:
+        result = _bq.update_submission_kpis(
+            submission_id = submission_id,
+            corrections   = corrections,
+            approved_by   = approved_by,
+            approve        = body.approve,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except BQInsertError as exc:
+        raise HTTPException(status_code=503, detail=f"Error al aplicar correcciones: {exc}")
+
+    return PatchKpisResponse(**result)

@@ -15,6 +15,9 @@ import {
   analystStagingQueueSchema,
   validateStagingResponseSchema,
   stagingRawUrlSchema,
+  submissionDetailSchema,
+  submissionListResponseSchema,
+  patchKpisResponseSchema,
   type AnalysisResult,
   type Company,
   type PortfolioEntry,
@@ -26,6 +29,9 @@ import {
   type AnalystStagingQueue,
   type ValidateStagingResponse,
   type StagingRawUrl,
+  type SubmissionDetail,
+  type SubmissionListResponse,
+  type PatchKpisResponse,
 } from "@/lib/schemas";
 
 // ── Analysis results for a specific company ────────────────────────────────────
@@ -276,6 +282,65 @@ export async function validateStaging(params: {
   rejection_note?: string;
 }): Promise<ValidateStagingResponse> {
   return apiPost("/api/analyst/staging/validate", params, validateStagingResponseSchema);
+}
+
+// ── Submissions — Vista de comparación Archivo ↔ KPIs ─────────────────────────
+
+/**
+ * GET /api/analyst/submissions
+ * Lista submissions recientes con display_name legible para la cola del analista.
+ * Filtra opcionalmente por empresa y/o status.
+ */
+export async function listSubmissions(params?: {
+  companyId?: string;
+  status?:    string;
+  limit?:     number;
+}): Promise<SubmissionListResponse> {
+  const qs = new URLSearchParams();
+  if (params?.companyId) qs.set("company_id", params.companyId);
+  if (params?.status)    qs.set("status",     params.status);
+  if (params?.limit)     qs.set("limit",      String(params.limit));
+  const url = `/api/analyst/submissions${qs.size ? `?${qs}` : ""}`;
+  return apiGet(url, submissionListResponseSchema);
+}
+
+/**
+ * GET /api/analyst/submissions/{submission_id}
+ * Detalle completo: metadatos del archivo + download_url firmada + KPIs extraídos.
+ *
+ * Uso en la vista de comparación del analista:
+ *   const detail = await getSubmissionDetail(id);
+ *   // detail.display_name     → "Ventas_Abril.pdf"
+ *   // detail.download_url     → Signed URL para descargar el original (1 hora)
+ *   // detail.kpis             → métricas que leyó la IA
+ */
+export async function getSubmissionDetail(submissionId: string): Promise<SubmissionDetail> {
+  return apiGet(
+    `/api/analyst/submissions/${encodeURIComponent(submissionId)}`,
+    submissionDetailSchema,
+  );
+}
+
+/**
+ * PATCH /api/analyst/submissions/{submission_id}/kpis
+ * Aplica correcciones manuales a los KPIs de una submission.
+ * Si approve=true (default), la submission pasa a VALIDATED.
+ */
+export async function patchSubmissionKpis(
+  submissionId: string,
+  corrections: Array<{
+    metric_id:    string;
+    period_id:    string;
+    period_start: string;
+    value:        number;
+  }>,
+  approve = true,
+): Promise<PatchKpisResponse> {
+  return apiPost(
+    `/api/analyst/submissions/${encodeURIComponent(submissionId)}/kpis`,
+    { corrections, approve },
+    patchKpisResponseSchema,
+  );
 }
 
 /**
