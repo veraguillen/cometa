@@ -283,19 +283,17 @@ export default function AnalystSidebar({
                 <div className="space-y-1">
                   {companies.map((entry) => {
 
-                    const active   = entry.key === selectedCompanyId;
-                    const isOvw    = entry.is_overview;
-                    const hasData  = entry.has_data;
+                    const active = entry.key === selectedCompanyId;
+                    const isOvw  = entry.is_overview;
 
-                    // ── Button style: 3 states ────────────────────────────
+                    // ── Button style: 2 states (analysts see all companies) ──
                     // 1. active   — accent highlight
-                    // 2. hasData  — full opacity, bright text (iluminado)
-                    // 3. no data  — dim / grayscale / not-allowed (opaco)
+                    // 2. default  — overview gets subtle border, rest plain
                     const buttonStyle: React.CSSProperties = active ? {
                       background: "var(--cometa-accent)",
                       color:      "var(--cometa-accent-fg)",
                       border:     "1px solid var(--cometa-accent)",
-                    } : hasData ? isOvw ? {
+                    } : isOvw ? {
                       color:      "var(--cometa-fg)",
                       border:     "1px solid color-mix(in srgb, var(--cometa-fg-muted) 15%, transparent)",
                       background: "color-mix(in srgb, var(--cometa-fg) 3%, transparent)",
@@ -304,21 +302,13 @@ export default function AnalystSidebar({
                       color:      "var(--cometa-fg)",
                       border:     "1px solid transparent",
                       opacity:    1,
-                    } : {
-                      // no data — opaque / disabled
-                      color:      "var(--cometa-fg-muted)",
-                      border:     "1px solid transparent",
-                      opacity:    0.3,
-                      filter:     "grayscale(1)",
-                      cursor:     "not-allowed",
                     };
 
                     return (
                       <button
                         key={entry.key}
-                        onClick={() => hasData ? handleCompanyClick(entry) : undefined}
-                        disabled={!hasData}
-                        title={hasData ? entry.label : `${entry.label} — sin datos históricos`}
+                        onClick={() => handleCompanyClick(entry)}
+                        title={entry.label}
                         className="w-full text-left px-3 py-2 rounded-md text-sm transition-all flex items-center gap-2"
                         style={buttonStyle}
                       >

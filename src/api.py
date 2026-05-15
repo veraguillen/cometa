@@ -1498,19 +1498,23 @@ def _build_results_from_bq(company_id: str) -> list[dict]:
         if not rows:
             return []
 
+        # Convert BQ Rows → plain dicts immediately (Row is a tuple subclass —
+        # serializing it directly produces [1, null, null, ...] instead of a JSON object)
+        rows = [dict(r.items()) for r in rows]
+
         # Group rows by period_id
         from collections import defaultdict
         by_period: dict[str, list] = defaultdict(list)
         for r in rows:
-            by_period[r.period_id].append(r)
+            by_period[r["period_id"]].append(r)
 
         # ── First pass: raw numeric values per period (for derived calculations) ──
         raw_by_period: dict[str, dict[str, float]] = {}
         for pid, period_rows in by_period.items():
             raw_by_period[pid] = {}
             for r in period_rows:
-                if r.num_value is not None and r.kpi_key:
-                    raw_by_period[pid][r.kpi_key] = float(r.num_value)
+                if r.get("num_value") is not None and r.get("kpi_key"):
+                    raw_by_period[pid][r["kpi_key"]] = float(r["num_value"])
 
         sorted_periods = sorted(by_period.keys())
 
@@ -1522,9 +1526,9 @@ def _build_results_from_bq(company_id: str) -> list[dict]:
             # Build financial_metrics_2025 from flat BQ rows
             fm: dict = {}
             for r in period_rows:
-                if r.num_value is None:
+                if r.get("num_value") is None:
                     continue  # skip nulls — leave section absent so frontend shows "—"
-                path = _KPI_PATH.get(r.kpi_key)
+                path = _KPI_PATH.get(r.get("kpi_key", ""))
                 if not path:
                     continue
                 section, subkey = path
@@ -1532,8 +1536,8 @@ def _build_results_from_bq(company_id: str) -> list[dict]:
                 # Don't overwrite a key already populated by an earlier alias
                 if subkey != "value" and subkey in fm[section]:
                     continue
-                unit_str    = r.unit or ""
-                display_val = _fmt(float(r.num_value), unit_str)
+                unit_str    = r.get("unit") or ""
+                display_val = _fmt(float(r["num_value"]), unit_str)
                 if subkey == "value":
                     fm[section]["value"] = {"value": display_val, "unit": unit_str}
                 else:
@@ -1573,12 +1577,12 @@ def _build_results_from_bq(company_id: str) -> list[dict]:
             # ── Fidelity calculation ───────────────────────────────────────
             # A row is "verified" when the view returns value_status='verified'
             # (driven by is_manually_edited=TRUE in fact_kpi_values).
-            non_null_rows   = [r for r in period_rows if r.num_value is not None]
-            verified_count  = sum(1 for r in non_null_rows if r.value_status == "verified")
+            non_null_rows   = [r for r in period_rows if r.get("num_value") is not None]
+            verified_count  = sum(1 for r in non_null_rows if r.get("value_status") == "verified")
             total_count     = len(non_null_rows)
             fidelity_pct    = int(verified_count / total_count * 100) if total_count else 0
             period_status   = "verified" if fidelity_pct == 100 else "legacy"
-            submission_ids  = list({r.submission_id for r in period_rows if r.submission_id})
+            submission_ids  = list({str(r["submission_id"]) for r in period_rows if r.get("submission_id") is not None})
 
             result_item = {
                 "id":         f"legacy_{period_id}",
