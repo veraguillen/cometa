@@ -2256,6 +2256,7 @@ class BQDataService:
         "user_id", "email", "password_hash", "name", "role",
         "company_id", "company_slug", "company_name",
         "status", "auth_provider",
+        "given_name", "family_name", "picture", "last_login",
     )
 
     @staticmethod
@@ -2280,6 +2281,10 @@ class BQDataService:
             "company_name":  d.get("company_name", "") or "",
             "status":        d.get("status", "ACTIVE"),
             "auth_provider": d.get("auth_provider", "password"),
+            "given_name":    d.get("given_name", "") or "",
+            "family_name":   d.get("family_name", "") or "",
+            "picture":       d.get("picture", "") or "",
+            "last_login":    d.get("last_login"),
         }
 
     def migrate_lineage_columns(self) -> None:
@@ -2321,6 +2326,53 @@ class BQDataService:
             except Exception as exc:
                 log.warning("migrate_lineage_columns: %s no se pudo crear (%s) — continuando", label, exc)
 
+    def migrate_dim_users_columns(self) -> None:
+        """
+        DDL idempotente: añade columnas de perfil Google a dim_users.
+
+        Columnas añadidas:
+          given_name  — nombre de pila del perfil Google
+          family_name — apellido del perfil Google
+          picture     — URL de avatar del perfil Google
+          last_login  — timestamp del último login exitoso
+
+        Se llama una vez en startup antes de create_dim_users_table().
+        Si las columnas ya existen, es un no-op. Si BQ no es accesible,
+        loga un warning sin bloquear el arranque.
+        """
+        statements = [
+            (
+                "dim_users.given_name",
+                f"""ALTER TABLE `{_DATASET}.dim_users`
+                    ADD COLUMN IF NOT EXISTS given_name STRING
+                    OPTIONS(description="Nombre de pila (Google profile)")""",
+            ),
+            (
+                "dim_users.family_name",
+                f"""ALTER TABLE `{_DATASET}.dim_users`
+                    ADD COLUMN IF NOT EXISTS family_name STRING
+                    OPTIONS(description="Apellido (Google profile)")""",
+            ),
+            (
+                "dim_users.picture",
+                f"""ALTER TABLE `{_DATASET}.dim_users`
+                    ADD COLUMN IF NOT EXISTS picture STRING
+                    OPTIONS(description="URL de avatar (Google profile)")""",
+            ),
+            (
+                "dim_users.last_login",
+                f"""ALTER TABLE `{_DATASET}.dim_users`
+                    ADD COLUMN IF NOT EXISTS last_login TIMESTAMP
+                    OPTIONS(description="Último login exitoso")""",
+            ),
+        ]
+        for label, ddl in statements:
+            try:
+                _client().query(ddl).result()
+                log.info("migrate_dim_users_columns: columna %s verificada/creada", label)
+            except Exception as exc:
+                log.warning("migrate_dim_users_columns: %s — %s — continuando", label, exc)
+
     def create_dim_users_table(self) -> None:
         """
         DDL: CREATE TABLE IF NOT EXISTS dim_users.
@@ -2351,6 +2403,14 @@ class BQDataService:
                 OPTIONS(description="ACTIVE | PENDING_INVITE"),
             auth_provider STRING
                 OPTIONS(description="password | google"),
+            given_name    STRING
+                OPTIONS(description="Nombre de pila (Google profile)"),
+            family_name   STRING
+                OPTIONS(description="Apellido (Google profile)"),
+            picture       STRING
+                OPTIONS(description="URL de avatar (Google profile)"),
+            last_login    TIMESTAMP
+                OPTIONS(description="Último login exitoso"),
             created_at    TIMESTAMP
                 OPTIONS(description="Fecha de creación del registro"),
             updated_at    TIMESTAMP
@@ -2435,7 +2495,11 @@ class BQDataService:
                 @company_slug  AS company_slug,
                 @company_name  AS company_name,
                 @status        AS status,
-                @auth_provider AS auth_provider
+                @auth_provider AS auth_provider,
+                @given_name    AS given_name,
+                @family_name   AS family_name,
+                @picture       AS picture,
+                IF(NULLIF(@last_login, '') IS NULL, NULL, CAST(NULLIF(@last_login, '') AS TIMESTAMP)) AS last_login
         ) AS source
         ON LOWER(target.email) = LOWER(source.email)
         WHEN MATCHED THEN UPDATE SET
@@ -2448,29 +2512,44 @@ class BQDataService:
             company_name  = source.company_name,
             status        = source.status,
             auth_provider = source.auth_provider,
+            given_name    = COALESCE(source.given_name, target.given_name),
+            family_name   = COALESCE(source.family_name, target.family_name),
+            picture       = COALESCE(source.picture, target.picture),
+            last_login    = COALESCE(source.last_login, CURRENT_TIMESTAMP()),
             updated_at    = CURRENT_TIMESTAMP()
         WHEN NOT MATCHED THEN INSERT
             (user_id, email, password_hash, name, role,
              company_id, company_slug, company_name,
-             status, auth_provider, created_at, updated_at)
+             status, auth_provider, given_name, family_name, picture,
+             last_login, created_at, updated_at)
         VALUES
             (source.user_id, source.email, source.password_hash,
              source.name, source.role, source.company_id,
              source.company_slug, source.company_name,
              source.status, source.auth_provider,
+             source.given_name, source.family_name, source.picture,
+             COALESCE(source.last_login, CURRENT_TIMESTAMP()),
              CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
         """
+        last_login_val = user.get("last_login")
+        # Normalize datetime/string → ISO string for BQ, or None
+        if last_login_val is not None and not isinstance(last_login_val, str):
+            last_login_val = str(last_login_val)
         params = [
-            bigquery.ScalarQueryParameter("user_id",       "STRING", u_id),
-            bigquery.ScalarQueryParameter("email",         "STRING", email),
-            bigquery.ScalarQueryParameter("password_hash", "STRING", u_pwd),
-            bigquery.ScalarQueryParameter("name",          "STRING", user.get("name", "") or ""),
-            bigquery.ScalarQueryParameter("role",          "STRING", user.get("role", "FOUNDER")),
-            bigquery.ScalarQueryParameter("company_id",    "STRING", user.get("company_id", "") or ""),
-            bigquery.ScalarQueryParameter("company_slug",  "STRING", user.get("company_slug", "") or ""),
-            bigquery.ScalarQueryParameter("company_name",  "STRING", user.get("company_name", "") or ""),
-            bigquery.ScalarQueryParameter("status",        "STRING", user.get("status", "ACTIVE")),
-            bigquery.ScalarQueryParameter("auth_provider", "STRING", user.get("auth_provider", "password")),
+            bigquery.ScalarQueryParameter("user_id",       "STRING",    u_id),
+            bigquery.ScalarQueryParameter("email",         "STRING",    email),
+            bigquery.ScalarQueryParameter("password_hash", "STRING",    u_pwd),
+            bigquery.ScalarQueryParameter("name",          "STRING",    user.get("name", "") or ""),
+            bigquery.ScalarQueryParameter("role",          "STRING",    user.get("role", "FOUNDER")),
+            bigquery.ScalarQueryParameter("company_id",    "STRING",    user.get("company_id", "") or ""),
+            bigquery.ScalarQueryParameter("company_slug",  "STRING",    user.get("company_slug", "") or ""),
+            bigquery.ScalarQueryParameter("company_name",  "STRING",    user.get("company_name", "") or ""),
+            bigquery.ScalarQueryParameter("status",        "STRING",    user.get("status", "ACTIVE")),
+            bigquery.ScalarQueryParameter("auth_provider", "STRING",    user.get("auth_provider", "password")),
+            bigquery.ScalarQueryParameter("given_name",    "STRING",    user.get("given_name", "") or ""),
+            bigquery.ScalarQueryParameter("family_name",   "STRING",    user.get("family_name", "") or ""),
+            bigquery.ScalarQueryParameter("picture",       "STRING",    user.get("picture", "") or ""),
+            bigquery.ScalarQueryParameter("last_login",    "STRING",    last_login_val or ""),
         ]
         try:
             _client().query(

@@ -296,6 +296,9 @@ async def _startup():
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _bq_svc.create_dim_users_table)
 
+        # Añadir columnas de perfil Google si la tabla ya existía antes de esta versión
+        await loop.run_in_executor(None, _bq_svc.migrate_dim_users_columns)
+
         # Migración one-shot: si dim_users está vacía y users.json tiene datos,
         # copiar todos los usuarios para que el servidor funcione inmediatamente.
         existing = await loop.run_in_executor(None, _bq_svc.list_all_users)
@@ -5362,8 +5365,8 @@ async def setup_password(
 # No requiere contraseña — el ID token de Google es la credencial.
 # El analista se registra automáticamente en users.json + dim_analyst (BQ).
 
-_GOOGLE_CLIENT_ID   = os.getenv("GOOGLE_CLIENT_ID", "")
-_COMETA_AUTH_DOMAIN = "cometa.vc"
+_GOOGLE_CLIENT_ID    = os.getenv("GOOGLE_CLIENT_ID", "")
+_COMETA_AUTH_DOMAINS = {"cometa.vc", "cometa.fund", "cometavc.com"}
 
 
 def _upsert_analyst_in_bq(*, user_id: str, email: str, name: str) -> None:
@@ -5411,17 +5414,18 @@ class GoogleAuthRequest(BaseModel):
 @limiter.limit("20/minute")
 async def google_auth(request: Request, body: GoogleAuthRequest):
     """
-    Autenticación OAuth con Google — exclusiva para analistas @cometa.vc.
+    Autenticación OAuth con Google — exclusiva para analistas de Cometa.
 
     Flujo
     -----
     1. Verificar el ID token de Google con la clave pública de Google.
-    2. Extraer email y verificar que termine en @cometa.vc.
-    3. Buscar o crear el usuario en users.json con role=ANALISTA.
+    2. Validar que el email pertenezca a un dominio Cometa autorizado.
+    3. Auto-onboarding: buscar usuario en dim_users (BQ) y crear si no existe.
     4. MERGE (upsert) en BigQuery dim_analyst — non-fatal.
     5. Emitir un JWT HS256 igual que /api/login.
 
     La contraseña NO se usa ni se requiere.
+    Dominios autorizados: cometa.vc, cometa.fund, cometavc.com
     """
     from google.oauth2 import id_token as _g_id_token
     from google.auth.transport import requests as _g_requests
@@ -5447,57 +5451,70 @@ async def google_auth(request: Request, body: GoogleAuthRequest):
     if not idinfo.get("email_verified"):
         raise HTTPException(status_code=401, detail="El email de Google no está verificado.")
 
-    # ── 2. Restringir a @cometa.vc ─────────────────────────────────────────
-    if not email.endswith(f"@{_COMETA_AUTH_DOMAIN}"):
+    # ── 2. Validar dominio Cometa ───────────────────────────────────────────
+    email_domain = email.split("@")[-1] if "@" in email else ""
+    if email_domain not in _COMETA_AUTH_DOMAINS:
         raise HTTPException(
             status_code=403,
             detail=(
-                f"Acceso denegado. Solo cuentas @{_COMETA_AUTH_DOMAIN} "
-                "pueden acceder como analistas."
+                f"Acceso denegado. Solo cuentas de dominios Cometa autorizados "
+                f"({', '.join(sorted(_COMETA_AUTH_DOMAINS))}) pueden acceder como analistas."
             ),
         )
 
-    name    = idinfo.get("name") or email.split("@")[0].replace(".", " ").title()
-    picture = idinfo.get("picture", "")
+    given_name  = idinfo.get("given_name", "") or ""
+    family_name = idinfo.get("family_name", "") or ""
+    name        = idinfo.get("name") or f"{given_name} {family_name}".strip() or email.split("@")[0].replace(".", " ").title()
+    picture     = idinfo.get("picture", "") or ""
 
-    # ── 3. Buscar o crear usuario en users.json ────────────────────────────
-    users = _load_users()
-    idx   = next(
-        (i for i, u in enumerate(users) if u.get("email", "").lower() == email),
-        None,
-    )
+    # ── 3. Auto-onboarding directo en dim_users (BQ) ───────────────────────
+    try:
+        existing = _bq_svc.get_user_by_email(email)
+    except Exception as exc:
+        log.warning("[google_auth] BQ get_user_by_email falló: %s", exc)
+        existing = None
 
-    if idx is None:
-        # Primer login: registrar automáticamente como ANALISTA
-        new_user: dict = {
-            "id":            generate_hybrid_id(email),
-            "email":         email,
-            "password":      _hash_password(secrets.token_urlsafe(32)),  # pw aleatorio, nunca usado
-            "name":          name,
-            "role":          "ANALISTA",
-            "company_id":    "COMETA_INTERNAL",
-            "auth_provider": "google",
-            "status":        "ACTIVE",
-        }
-        UserOut.model_validate(new_user)   # validar antes de escribir
-        users.append(new_user)
-        _save_users([UserSchema.model_validate(u) for u in users])
-        user = new_user
-        log.info("[google_auth] Nuevo analista registrado: %s", email)
+    if existing:
+        user_id = existing["id"]
+        log.info("[google_auth] Usuario existente: %s (%s)", email, user_id)
     else:
-        user = users[idx]
-        # Actualizar nombre si cambió en Google
-        if user.get("name") != name:
-            users[idx]["name"] = name
-            _save_users([UserSchema.model_validate(u) for u in users])
-            user = users[idx]
+        user_id = generate_hybrid_id(email)
+        log.info("[google_auth] Auto-onboarding nuevo analista: %s (%s)", email, user_id)
 
-    user_id: str = user["id"]
+    # Upsert completo con perfil Google y last_login
+    import datetime as _dt
+    user_record = {
+        "user_id":       user_id,
+        "email":         email,
+        "password_hash": existing.get("password", "") if existing else _hash_password(secrets.token_urlsafe(32)),
+        "name":          name,
+        "role":          "ANALISTA",
+        "company_id":    "COMETA_INTERNAL",
+        "company_slug":  "cometa",
+        "company_name":  "Cometa",
+        "status":        "ACTIVE",
+        "auth_provider": "google",
+        "given_name":    given_name,
+        "family_name":   family_name,
+        "picture":       picture,
+        "last_login":    _dt.datetime.utcnow().isoformat() + "Z",
+    }
+    try:
+        _bq_svc.upsert_user(user_record)
+        log.info("[google_auth] dim_users upserted: %s", email)
+    except Exception as exc:
+        # Non-fatal if user already existed — we still issue JWT
+        log.warning("[google_auth] dim_users upsert falló: %s", exc)
+        if not existing:
+            raise HTTPException(
+                status_code=500,
+                detail="No se pudo crear el usuario en la base de datos. Intenta de nuevo.",
+            )
 
     # ── 4. Upsert en BigQuery dim_analyst (non-fatal) ──────────────────────
     _upsert_analyst_in_bq(user_id=user_id, email=email, name=name)
 
-    # ── 5. Emitir JWT ─────────────────────────────────────────────────────
+    # ── 5. Emitir JWT ──────────────────────────────────────────────────────
     token = create_access_token(
         email   = email,
         role    = "ANALISTA",
