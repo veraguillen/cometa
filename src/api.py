@@ -5406,8 +5406,27 @@ def _upsert_analyst_in_bq(*, user_id: str, email: str, name: str) -> None:
 
 
 class GoogleAuthRequest(BaseModel):
-    """Body para POST /api/auth/google."""
-    id_token: str
+    """
+    Body para POST /api/auth/google.
+
+    Acepta dos nombres de campo para máxima compatibilidad:
+      - id_token   → nombre canónico del backend (nuestro estándar)
+      - credential → nombre nativo de Google Identity Services (GIS SDK)
+
+    Si el frontend envía cualquiera de los dos, funciona.
+    Error 422 solo si ambos están ausentes o vacíos.
+    """
+    id_token:   str | None = None
+    credential: str | None = None  # alias nativo de GIS
+
+    @model_validator(mode="after")
+    def resolve_token(self) -> "GoogleAuthRequest":
+        self.id_token = self.id_token or self.credential
+        if not self.id_token or not self.id_token.strip():
+            raise ValueError(
+                "Se requiere el token de Google: envía 'id_token' o 'credential' en el body."
+            )
+        return self
 
 
 @app.post("/api/auth/google")

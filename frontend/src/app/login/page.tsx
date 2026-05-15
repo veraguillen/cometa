@@ -102,13 +102,19 @@ function LoginForm() {
       router.push(dest);
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
-        const status = err.response?.status;
+        const status  = err.response?.status;
+        const detail  = err.response?.data?.detail;
+        const detailMsg = Array.isArray(detail)
+          ? detail[0]?.msg
+          : (typeof detail === "string" ? detail : null);
         if (status === 403) {
           setError("Solo cuentas @cometa.vc pueden acceder como analistas.");
         } else if (status === 401) {
           setError("Token de Google inválido. Intenta de nuevo.");
+        } else if (status === 422) {
+          setError(detailMsg ?? "Error de validación. Intenta de nuevo.");
         } else {
-          setError("Error de autenticación. Verifica la conexión al servidor.");
+          setError(`Error de autenticación (${status}). ${detailMsg ?? "Verifica la conexión al servidor."}`);
         }
       } else {
         setError("Error inesperado al autenticar con Google.");
