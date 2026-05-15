@@ -7,9 +7,9 @@ if sys.stderr.encoding != "utf-8":
 from dotenv import load_dotenv
 load_dotenv()  # Carga .env desde el directorio de trabajo
 
-from fastapi import FastAPI, UploadFile, File, Header, HTTPException, Depends, Request, Query
+from fastapi import FastAPI, UploadFile, File, Header, HTTPException, Depends, Request, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
@@ -5565,6 +5565,130 @@ async def google_auth(request: Request, body: GoogleAuthRequest):
             "company_name": "Cometa",
         },
     }
+
+
+@app.post("/api/auth/google/callback")
+@limiter.limit("20/minute")
+async def google_auth_redirect_callback(
+    request: Request,
+    credential:    str      = Form(...),
+    g_csrf_token:  str | None = Form(None),
+):
+    """
+    Callback para el flujo ux_mode='redirect' de Google Identity Services.
+
+    Google hace un POST form-encoded a este endpoint con el campo 'credential'.
+    Tras verificar el token, redirige al frontend con el JWT como query param
+    para que la página de login lo almacene en localStorage y establezca la sesión.
+
+    Este endpoint NUNCA devuelve JSON — siempre redirige.
+    """
+    from google.oauth2 import id_token as _g_id_token
+    from google.auth.transport import requests as _g_requests
+    import urllib.parse as _urlparse
+
+    # URL base del frontend para los redirects
+    _frontend_base = (
+        _ALLOWED_ORIGINS[0]
+        if _ALLOWED_ORIGINS
+        else os.getenv("FRONTEND_URL", "http://localhost:3000")
+    )
+
+    def _fail_redirect(msg: str) -> RedirectResponse:
+        params = _urlparse.urlencode({"error": msg})
+        return RedirectResponse(
+            url=f"{_frontend_base}/login?{params}",
+            status_code=303,
+        )
+
+    if not _GOOGLE_CLIENT_ID:
+        return _fail_redirect("Servidor no configurado para Google OAuth.")
+
+    # ── 1. Verificar token con Google ──────────────────────────────────────
+    try:
+        idinfo = _g_id_token.verify_oauth2_token(
+            credential,
+            _g_requests.Request(),
+            _GOOGLE_CLIENT_ID,
+        )
+    except ValueError:
+        return _fail_redirect("Token de Google inválido.")
+
+    email = (idinfo.get("email") or "").strip().lower()
+    if not idinfo.get("email_verified"):
+        return _fail_redirect("El email de Google no está verificado.")
+
+    # ── 2. Validar dominio Cometa ───────────────────────────────────────────
+    email_domain = email.split("@")[-1] if "@" in email else ""
+    if email_domain not in _COMETA_AUTH_DOMAINS:
+        return _fail_redirect(
+            f"Solo cuentas de dominios Cometa autorizados ({', '.join(sorted(_COMETA_AUTH_DOMAINS))})."
+        )
+
+    given_name  = idinfo.get("given_name", "") or ""
+    family_name = idinfo.get("family_name", "") or ""
+    name        = (
+        idinfo.get("name")
+        or f"{given_name} {family_name}".strip()
+        or email.split("@")[0].replace(".", " ").title()
+    )
+    picture = idinfo.get("picture", "") or ""
+
+    # ── 3. Auto-onboarding en dim_users (BQ) ──────────────────────────────
+    try:
+        existing = _bq_svc.get_user_by_email(email)
+    except Exception:
+        existing = None
+
+    user_id = existing["id"] if existing else generate_hybrid_id(email)
+
+    import datetime as _dt
+    user_record = {
+        "user_id":       user_id,
+        "email":         email,
+        "password_hash": existing.get("password", "") if existing else _hash_password(secrets.token_urlsafe(32)),
+        "name":          name,
+        "role":          "ANALISTA",
+        "company_id":    "COMETA_INTERNAL",
+        "company_slug":  "cometa",
+        "company_name":  "Cometa",
+        "status":        "ACTIVE",
+        "auth_provider": "google",
+        "given_name":    given_name,
+        "family_name":   family_name,
+        "picture":       picture,
+        "last_login":    _dt.datetime.utcnow().isoformat() + "Z",
+    }
+    try:
+        _bq_svc.upsert_user(user_record)
+    except Exception as exc:
+        log.warning("[google_cb] dim_users upsert falló: %s", exc)
+        if not existing:
+            return _fail_redirect("No se pudo crear el usuario. Intenta de nuevo.")
+
+    # ── 4. Upsert dim_analyst (non-fatal) ─────────────────────────────────
+    _upsert_analyst_in_bq(user_id=user_id, email=email, name=name)
+
+    # ── 5. Emitir JWT y redirigir al frontend ─────────────────────────────
+    token = create_access_token(
+        email   = email,
+        role    = "ANALISTA",
+        name    = name,
+        user_id = user_id,
+        extra_claims={
+            "company_slug":  "cometa",
+            "company_name":  "Cometa",
+            "company_id":    "COMETA_INTERNAL",
+            "auth_provider": "google",
+            "picture":       picture,
+        },
+    )
+    dest = "/analyst/dashboard"
+    params = _urlparse.urlencode({"token": token, "next": dest})
+    return RedirectResponse(
+        url=f"{_frontend_base}/login?{params}",
+        status_code=303,
+    )
 
 
 # ── Founder notification endpoints ───────────────────────────────────────────

@@ -22,6 +22,7 @@ import {
   loginWithGoogle,
   validateSession,
   clearSession,
+  TOKEN_KEY,
   type UserInfo,
 } from "@/services/api-client";
 import { validationErrorSchema } from "@/lib/schemas";
@@ -38,7 +39,7 @@ declare global {
     google?: {
       accounts: {
         id: {
-          initialize: (cfg: { client_id: string; callback: (r: { credential: string }) => void; auto_select?: boolean }) => void;
+          initialize: (cfg: { client_id: string; callback?: (r: { credential: string }) => void; auto_select?: boolean; ux_mode?: string; login_uri?: string }) => void;
           renderButton: (el: HTMLElement, cfg: object) => void;
           prompt: () => void;
         };
@@ -70,26 +71,64 @@ function LoginForm() {
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Si Google redirigió de vuelta con un JWT en la URL, establecer sesión
+    const tokenFromUrl = searchParams.get("token");
+    const errorFromUrl = searchParams.get("error");
+
+    if (errorFromUrl) {
+      setError(decodeURIComponent(errorFromUrl));
+      // Limpiar params de la URL sin redirigir
+      const clean = new URL(window.location.href);
+      clean.searchParams.delete("error");
+      window.history.replaceState({}, "", clean.toString());
+      return;
+    }
+
+    if (tokenFromUrl) {
+      clearSession();
+      localStorage.setItem(TOKEN_KEY, tokenFromUrl);
+      // Limpiar token de la URL antes de redirigir
+      const clean = new URL(window.location.href);
+      clean.searchParams.delete("token");
+      clean.searchParams.delete("next");
+      window.history.replaceState({}, "", clean.toString());
+      // Validar sesión y redirigir
+      validateSession().then((u) => {
+        if (u) {
+          document.cookie = `cometa_user_id=${u.user_id}; path=/; max-age=86400; SameSite=Lax`;
+          const dest = nextPath ?? (u.user_id.startsWith("ANA-") ? "/analyst/dashboard" : "/founder/onboarding");
+          router.replace(dest);
+        } else {
+          clearSession();
+          setError("Sesión de Google inválida. Intenta de nuevo.");
+        }
+      });
+      return;
+    }
+
     validateSession().then((u) => setExistingUser(u));
   }, []);
 
-  // Initialise Google Identity Services once the GIS script has loaded
+  // Initialise Google Identity Services en modo redirect (sin popup)
   function initGoogleSignIn() {
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    const clientId  = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    const apiUrl    = process.env.NEXT_PUBLIC_API_URL ?? "";
+    const loginUri  = `${apiUrl}/api/auth/google/callback`;
     if (!clientId || !window.google || !googleBtnRef.current) return;
     window.google.accounts.id.initialize({
       client_id:   clientId,
+      ux_mode:     "redirect",
+      login_uri:   loginUri,
       auto_select: false,
-      callback:    handleGoogleCredential,
     });
     window.google.accounts.id.renderButton(googleBtnRef.current, {
-      theme:           "outline",
-      size:            "large",
-      shape:           "rectangular",
-      logo_alignment:  "center",
-      width:           400,
-      text:            "signin_with",
-      locale:          "es",
+      theme:          "outline",
+      size:           "large",
+      shape:          "rectangular",
+      logo_alignment: "center",
+      width:          400,
+      text:           "signin_with",
+      locale:         "es",
     });
   }
 
