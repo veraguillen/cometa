@@ -518,6 +518,8 @@ class BQDataService:
         df_sub = pd.DataFrame([_sub_record])
 
         try:
+            self._ensure_column("submissions", "display_name",   "STRING")
+            self._ensure_column("submissions", "raw_file_path",  "STRING")
             self._append_dataframe(df_sub, "submissions")
             log.info("Submission %s insertada para empresa %s", sub_id, company_id)
         except Exception as exc:
@@ -993,8 +995,25 @@ class BQDataService:
         try:
             rows = list(_client().query(query, job_config=job_config).result())
         except GoogleAPIError as exc:
-            log.error("BQ error en get_rag_context — query=%r error=%s", query, exc)
-            raise BQInsertError(f"Error al consultar contexto RAG: {exc}") from exc
+            # Si la vista no existe en el dataset principal (p.ej. BD_Cometa en prod
+            # pero v_rag_context_dev solo existe en BD_Cometa_Dev), reintentamos
+            # con el dataset de desarrollo como fallback.
+            _err_msg = str(exc).lower()
+            if "not found" in _err_msg or "unrecognized" in _err_msg:
+                _dev_dataset = f"{_PROJECT}.BD_Cometa_Dev"
+                _fallback_query = query.replace(f"`{_DATASET}.", f"`{_dev_dataset}.")
+                log.warning(
+                    "get_rag_context: vista no encontrada en %s — reintentando con %s",
+                    _DATASET, _dev_dataset,
+                )
+                try:
+                    rows = list(_client().query(_fallback_query, job_config=job_config).result())
+                except GoogleAPIError as exc2:
+                    log.error("BQ error en get_rag_context (fallback) — error=%s", exc2)
+                    raise BQInsertError(f"Error al consultar contexto RAG: {exc2}") from exc2
+            else:
+                log.error("BQ error en get_rag_context — query=%r error=%s", query, exc)
+                raise BQInsertError(f"Error al consultar contexto RAG: {exc}") from exc
 
         empresas = list({r.company_name for r in rows if r.company_name})
         log.info("[RAG] Empresas en contexto: %s — total filas: %d", empresas, len(rows))
@@ -1098,8 +1117,22 @@ class BQDataService:
                 company_id,
                 status,
                 CAST(created_at AS STRING) AS created_at,
-                COALESCE(display_name, '')  AS display_name,
-                COALESCE(source_file, '')   AS source_file
+                COALESCE(display_name, '')   AS display_name,
+                COALESCE(source_file, '')    AS source_file,
+                COALESCE(raw_file_path, '')  AS raw_file_path
+            FROM `{_DATASET}.submissions`
+            WHERE submission_id = @sid
+            LIMIT 1
+        """
+        _meta_fallback_query = f"""
+            SELECT
+                submission_id,
+                company_id,
+                status,
+                CAST(created_at AS STRING) AS created_at,
+                COALESCE(display_name, '')        AS display_name,
+                COALESCE(source_file, '')         AS source_file,
+                CAST(NULL AS STRING)              AS raw_file_path
             FROM `{_DATASET}.submissions`
             WHERE submission_id = @sid
             LIMIT 1
@@ -1144,7 +1177,11 @@ class BQDataService:
         """
         try:
             cfg = bigquery.QueryJobConfig(query_parameters=[param])
-            meta_rows = list(_client().query(meta_query, job_config=cfg).result())
+            try:
+                meta_rows = list(_client().query(meta_query, job_config=cfg).result())
+            except GoogleAPIError:
+                # raw_file_path aún no existe en la tabla — usar query sin la columna
+                meta_rows = list(_client().query(_meta_fallback_query, job_config=cfg).result())
             if not meta_rows:
                 raise ValueError(f"submission_id '{sid}' no encontrado.")
             meta = dict(meta_rows[0])
@@ -1567,6 +1604,7 @@ class BQDataService:
             }
 
         try:
+            self._ensure_column("fact_kpi_staging", "display_name", "STRING")
             self._insert_rows_json_safe(records, "fact_kpi_staging")
             unique_periods = sorted({r["period_id"] for r in records})
             log.info(
@@ -2196,6 +2234,32 @@ class BQDataService:
                 )
 
     # ── Helper interno ────────────────────────────────────────────────────────
+
+    def _ensure_column(
+        self, table_name: str, column_name: str, column_type: str = "STRING"
+    ) -> None:
+        """
+        Añade una columna a la tabla BQ si no existe (DDL ALTER TABLE).
+
+        Inocuo si la columna ya existe (IF NOT EXISTS). Loguea y continúa en
+        caso de error DDL para no bloquear inserts en curso.
+        """
+        destination = f"{_DATASET}.{table_name}"
+        try:
+            table     = _client().get_table(destination)
+            known_cols = {f.name for f in table.schema}
+            if column_name in known_cols:
+                return
+            ddl = (
+                f"ALTER TABLE `{destination}` "
+                f"ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+            )
+            _client().query(ddl).result()
+            log.info("_ensure_column: añadida columna %s a %s", column_name, table_name)
+        except Exception as exc:
+            log.warning(
+                "_ensure_column: no se pudo añadir %s a %s: %s", column_name, table_name, exc
+            )
 
     def _append_dataframe(self, df: pd.DataFrame, table_name: str) -> None:
         """

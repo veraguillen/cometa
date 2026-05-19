@@ -540,8 +540,9 @@ async def get_submission_detail(
     except BQInsertError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
-    # Generar Signed URL para descarga segura del archivo original
-    gcs_uri = data.get("source_file", "")
+    # Generar Signed URL para descarga segura del archivo original.
+    # raw_file_path es la URI gs:// real; source_file puede ser "upload://..." (no firmable).
+    gcs_uri = data.get("raw_file_path", "") or data.get("source_file", "")
     download_url, expires_in = _signed_url_from_gcs_uri(gcs_uri)
 
     kpis = [
