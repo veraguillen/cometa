@@ -5372,6 +5372,13 @@ async def setup_password(
 _GOOGLE_CLIENT_ID    = os.getenv("GOOGLE_CLIENT_ID", "")
 _COMETA_AUTH_DOMAINS = {"cometa.vc", "cometa.fund", "cometavc.com"}
 
+# URL pública del frontend — usada en los redirects del callback de Google.
+# Se lee de FRONTEND_URL (explícita) con fallback a _ALLOWED_ORIGINS[0].
+_FRONTEND_URL: str = (
+    os.getenv("FRONTEND_URL", "").strip()
+    or (_ALLOWED_ORIGINS[0] if _ALLOWED_ORIGINS else "http://localhost:3000")
+)
+
 
 def _upsert_analyst_in_bq(*, user_id: str, email: str, name: str) -> None:
     """
@@ -5587,12 +5594,8 @@ async def google_auth_redirect_callback(
     from google.auth.transport import requests as _g_requests
     import urllib.parse as _urlparse
 
-    # URL base del frontend para los redirects
-    _frontend_base = (
-        _ALLOWED_ORIGINS[0]
-        if _ALLOWED_ORIGINS
-        else os.getenv("FRONTEND_URL", "http://localhost:3000")
-    )
+    # URL base del frontend — usa la variable de módulo ya resuelta.
+    _frontend_base = _FRONTEND_URL
 
     def _fail_redirect(msg: str) -> RedirectResponse:
         params = _urlparse.urlencode({"error": msg})
@@ -5602,17 +5605,23 @@ async def google_auth_redirect_callback(
         )
 
     if not _GOOGLE_CLIENT_ID:
+        log.error("[google_cb] GOOGLE_CLIENT_ID no configurado en el servidor.")
         return _fail_redirect("Servidor no configurado para Google OAuth.")
 
     # ── 1. Verificar token con Google ──────────────────────────────────────
+    # g_csrf_token NO se valida: en flujo cross-origin (backend y frontend en
+    # dominios distintos de Cloud Run) el backend no puede leer la cookie del
+    # frontend, por lo que la verificación CSRF la delega Google internamente.
     try:
         idinfo = _g_id_token.verify_oauth2_token(
             credential,
             _g_requests.Request(),
             _GOOGLE_CLIENT_ID,
+            clock_skew_in_seconds=10,
         )
-    except ValueError:
-        return _fail_redirect("Token de Google inválido.")
+    except Exception as exc:
+        log.error("[google_cb] verify_oauth2_token falló (%s): %s", type(exc).__name__, exc)
+        return _fail_redirect("Token de Google inválido. Intenta de nuevo.")
 
     email = (idinfo.get("email") or "").strip().lower()
     if not idinfo.get("email_verified"):
@@ -5640,7 +5649,10 @@ async def google_auth_redirect_callback(
     except Exception:
         existing = None
 
-    user_id = existing["id"] if existing else generate_hybrid_id(email)
+    # Si el usuario ya existe pero tiene un ID legacy (ej. "U001"),
+    # se genera un ID híbrido nuevo para que el JWT pase la validación Zod.
+    raw_id  = existing.get("id", "") if existing else ""
+    user_id = raw_id if is_hybrid_id(raw_id) else generate_hybrid_id(email)
 
     import datetime as _dt
     user_record = {
