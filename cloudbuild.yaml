@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Google Cloud Build — Cometa Vault CI/CD
 #
-# Trigger: push a la rama `master`
+# Trigger: push a la rama `main`
 #
 # Imágenes:
 #   gcr.io/$PROJECT_ID/cometa-backend:latest  ← FastAPI  (./Dockerfile)
